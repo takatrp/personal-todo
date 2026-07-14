@@ -54,7 +54,14 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   ]);
 
   assert.match(app, /createdAt: previousTask\?\.createdAt \?\? now/);
+  assert.match(app, /type="date"/);
   assert.match(app, /type="datetime-local"/);
+  assert.match(app, /startHasTime: false/);
+  assert.match(app, /dueHasTime: false/);
+  assert.match(app, /function composeTaskDateValue/);
+  assert.match(app, /時間も指定/);
+  assert.match(css, /\.date-time-inputs/);
+  assert.match(css, /\.time-toggle/);
   assert.match(app, /依頼元/);
   assert.match(app, /依頼先/);
   assert.match(app, /ファイル添付/);
@@ -78,7 +85,7 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /const TEMPLATE_STORE_NAME = "templates"/);
   assert.match(app, /removeTabAndUnassign/);
   assert.match(app, /function showAllTasks/);
-  assert.match(app, /期限は開始日時以降に設定してください/);
+  assert.match(app, /期限は開始日以降に設定してください/);
   assert.match(app, /moveTaskStatus/);
   assert.match(app, /handleKanbanDrop/);
   assert.match(app, /GANTT_DAYS = 14/);

@@ -55,7 +55,11 @@ type TaskForm = {
   description: string;
   status: TaskStatus;
   startAt: string;
+  startTime: string;
+  startHasTime: boolean;
   dueAt: string;
+  dueTime: string;
+  dueHasTime: boolean;
   tags: string;
   tabId: string;
   reminderAt: string;
@@ -113,7 +117,11 @@ const initialForm: TaskForm = {
   description: "",
   status: "open",
   startAt: "",
+  startTime: "09:00",
+  startHasTime: false,
   dueAt: "",
+  dueTime: "17:00",
+  dueHasTime: false,
   tags: "",
   tabId: "",
   reminderAt: "",
@@ -418,9 +426,38 @@ function isDeleted(task: Task) {
   return Boolean(task.deletedAt);
 }
 
+function isDateOnly(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function taskDate(value: string, boundary: "start" | "end" = "start") {
+  if (!isDateOnly(value)) return new Date(value);
+  const date = fromLocalDateKey(value);
+  if (boundary === "end") date.setHours(23, 59, 59, 999);
+  return date;
+}
+
+function toDateFormValue(value: string, fallbackTime: string) {
+  if (!value) return { date: "", time: fallbackTime, hasTime: false };
+  if (isDateOnly(value)) return { date: value, time: fallbackTime, hasTime: false };
+  const date = new Date(value);
+  return {
+    date: toLocalDateKey(date),
+    time: `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`,
+    hasTime: true,
+  };
+}
+
+function composeTaskDateValue(date: string, time: string, hasTime: boolean) {
+  if (!date) return "";
+  if (!hasTime) return date;
+  return new Date(`${date}T${time || "00:00"}`).toISOString();
+}
+
 function advanceRecurringValue(value: string, recurrence: Recurrence) {
   if (!value || recurrence === "none") return value;
-  const date = new Date(value);
+  const dateOnly = isDateOnly(value);
+  const date = taskDate(value);
   if (recurrence === "daily") date.setDate(date.getDate() + 1);
   if (recurrence === "weekly") date.setDate(date.getDate() + 7);
   if (recurrence === "monthly") {
@@ -430,7 +467,7 @@ function advanceRecurringValue(value: string, recurrence: Recurrence) {
     const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
     date.setDate(Math.min(originalDay, lastDay));
   }
-  return date.toISOString();
+  return dateOnly ? toLocalDateKey(date) : date.toISOString();
 }
 
 function buildNextRecurringTask(task: Task, now: string): Task {
@@ -456,16 +493,16 @@ function buildNextRecurringTask(task: Task, now: string): Task {
 }
 
 function isOverdue(task: Task, now = new Date()) {
-  return Boolean(task.dueAt) && !isComplete(task) && new Date(task.dueAt) < now;
+  return Boolean(task.dueAt) && !isComplete(task) && taskDate(task.dueAt, "end") < now;
 }
 
 function isDueToday(task: Task, now = new Date()) {
-  return Boolean(task.dueAt) && isSameLocalDay(new Date(task.dueAt), now);
+  return Boolean(task.dueAt) && isSameLocalDay(taskDate(task.dueAt), now);
 }
 
 function isUpcoming(task: Task, now = new Date()) {
   if (!task.dueAt || isComplete(task)) return false;
-  const due = new Date(task.dueAt);
+  const due = taskDate(task.dueAt);
   const start = localDayStart(now);
   const end = new Date(start);
   end.setDate(end.getDate() + 8);
@@ -474,6 +511,13 @@ function isUpcoming(task: Task, now = new Date()) {
 
 function formatDateTime(value: string) {
   if (!value) return "期限なし";
+  if (isDateOnly(value)) {
+    return new Intl.DateTimeFormat("ja-JP", {
+      month: "numeric",
+      day: "numeric",
+      weekday: "short",
+    }).format(taskDate(value));
+  }
   return new Intl.DateTimeFormat("ja-JP", {
     month: "numeric",
     day: "numeric",
@@ -969,13 +1013,19 @@ export function TodoApp() {
   }
 
   function openEditForm(task: Task) {
+    const start = toDateFormValue(task.startAt, "09:00");
+    const due = toDateFormValue(task.dueAt, "17:00");
     setEditingId(task.id);
     setForm({
       title: task.title,
       description: task.description,
       status: task.status,
-      startAt: toLocalInput(task.startAt),
-      dueAt: toLocalInput(task.dueAt),
+      startAt: start.date,
+      startTime: start.time,
+      startHasTime: start.hasTime,
+      dueAt: due.date,
+      dueTime: due.time,
+      dueHasTime: due.hasTime,
       tags: task.tags.join("、"),
       tabId: tabs.some((tab) => tab.id === task.tabId) ? task.tabId : "",
       reminderAt: toLocalInput(task.reminderAt),
@@ -1000,8 +1050,10 @@ export function TodoApp() {
       return;
     }
     const previousTask = editingId ? tasks.find((task) => task.id === editingId) : undefined;
-    if (form.startAt && form.dueAt && new Date(form.startAt) > new Date(form.dueAt)) {
-      setNotice("期限は開始日時以降に設定してください");
+    const startAt = composeTaskDateValue(form.startAt, form.startTime, form.startHasTime);
+    const dueAt = composeTaskDateValue(form.dueAt, form.dueTime, form.dueHasTime);
+    if (startAt && dueAt && taskDate(startAt) > taskDate(dueAt, "end")) {
+      setNotice("期限は開始日以降に設定してください");
       return;
     }
     setIsSaving(true);
@@ -1014,8 +1066,8 @@ export function TodoApp() {
       title,
       description: form.description.trim(),
       status: nextStatus,
-      startAt: form.startAt ? new Date(form.startAt).toISOString() : "",
-      dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : "",
+      startAt,
+      dueAt,
       tags: parseTags(form.tags),
       tabId: tabs.some((tab) => tab.id === form.tabId) ? form.tabId : "",
       reminderAt,
@@ -1127,8 +1179,8 @@ export function TodoApp() {
   function getGanttBarStyle(task: Task): CSSProperties | null {
     if (!timelineStart || !task.dueAt) return null;
     const rangeStart = fromLocalDateKey(timelineStart);
-    const taskStart = localDayStart(new Date(task.startAt || task.dueAt));
-    const taskEnd = localDayStart(new Date(task.dueAt));
+    const taskStart = localDayStart(taskDate(task.startAt || task.dueAt));
+    const taskEnd = localDayStart(taskDate(task.dueAt));
     const rawStart = localDayDifference(rangeStart, taskStart);
     const rawEnd = localDayDifference(rangeStart, taskEnd);
     if (rawEnd < 0 || rawStart >= GANTT_DAYS) return null;
@@ -2046,22 +2098,62 @@ export function TodoApp() {
                 </label>
 
                 <div className="form-grid">
-                  <label className="form-field">
-                    <span>開始日時</span>
-                    <input
-                      type="datetime-local"
-                      value={form.startAt}
-                      onChange={(event) => setForm((current) => ({ ...current, startAt: event.target.value }))}
-                    />
-                  </label>
-                  <label className="form-field">
-                    <span>期限日時</span>
-                    <input
-                      type="datetime-local"
-                      value={form.dueAt}
-                      onChange={(event) => setForm((current) => ({ ...current, dueAt: event.target.value }))}
-                    />
-                  </label>
+                  <div className="form-field date-time-field">
+                    <span>開始日</span>
+                    <div className="date-time-inputs">
+                      <input
+                        type="date"
+                        aria-label="開始日"
+                        value={form.startAt}
+                        onChange={(event) => setForm((current) => ({ ...current, startAt: event.target.value }))}
+                      />
+                      {form.startHasTime && (
+                        <input
+                          type="time"
+                          aria-label="開始時刻"
+                          value={form.startTime}
+                          onChange={(event) => setForm((current) => ({ ...current, startTime: event.target.value }))}
+                        />
+                      )}
+                    </div>
+                    <label className="time-toggle">
+                      <input
+                        type="checkbox"
+                        checked={form.startHasTime}
+                        onChange={(event) => setForm((current) => ({ ...current, startHasTime: event.target.checked }))}
+                      />
+                      <span>時間も指定</span>
+                    </label>
+                    <small className="field-help">初期設定は日付のみです</small>
+                  </div>
+                  <div className="form-field date-time-field">
+                    <span>期限日</span>
+                    <div className="date-time-inputs">
+                      <input
+                        type="date"
+                        aria-label="期限日"
+                        value={form.dueAt}
+                        onChange={(event) => setForm((current) => ({ ...current, dueAt: event.target.value }))}
+                      />
+                      {form.dueHasTime && (
+                        <input
+                          type="time"
+                          aria-label="期限時刻"
+                          value={form.dueTime}
+                          onChange={(event) => setForm((current) => ({ ...current, dueTime: event.target.value }))}
+                        />
+                      )}
+                    </div>
+                    <label className="time-toggle">
+                      <input
+                        type="checkbox"
+                        checked={form.dueHasTime}
+                        onChange={(event) => setForm((current) => ({ ...current, dueHasTime: event.target.checked }))}
+                      />
+                      <span>時間も指定</span>
+                    </label>
+                    <small className="field-help">日付のみの期限は、その日の終わりまで有効です</small>
+                  </div>
                   <label className="form-field">
                     <span>リマインダー</span>
                     <input
