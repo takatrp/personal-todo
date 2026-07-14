@@ -41,5 +41,7 @@ npm run build:pages
 
 ## GitHub Pages
 
+公開URL: https://takatrp.github.io/personal-todo/
+
 公開用ファイルは `npm run build:pages` で `pages-dist` に生成します。
 公開版もデータは利用中のブラウザ内に保存され、リポジトリにはToDoや添付ファイルを送信しません。
