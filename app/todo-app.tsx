@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  CSSProperties,
+  DragEvent,
   FormEvent,
   KeyboardEvent,
   useEffect,
@@ -11,6 +13,7 @@ import {
 
 type TaskStatus = "open" | "doing" | "waiting" | "done";
 type ViewKey = "all" | "today" | "overdue" | "upcoming" | "done";
+type DisplayMode = "list" | "kanban" | "gantt";
 
 type Attachment = {
   id: string;
@@ -25,6 +28,7 @@ type Task = {
   title: string;
   description: string;
   status: TaskStatus;
+  startAt: string;
   dueAt: string;
   tags: string[];
   requester: string;
@@ -39,6 +43,7 @@ type TaskForm = {
   title: string;
   description: string;
   status: TaskStatus;
+  startAt: string;
   dueAt: string;
   tags: string;
   requester: string;
@@ -51,11 +56,13 @@ const DB_VERSION = 1;
 const STORE_NAME = "tasks";
 const MAX_FILE_SIZE = 8 * 1024 * 1024;
 const MAX_TASK_ATTACHMENT_SIZE = 20 * 1024 * 1024;
+const GANTT_DAYS = 14;
 
 const initialForm: TaskForm = {
   title: "",
   description: "",
   status: "open",
+  startAt: "",
   dueAt: "",
   tags: "",
   requester: "",
@@ -105,7 +112,14 @@ async function readTasks(): Promise<Task[]> {
       .transaction(STORE_NAME, "readonly")
       .objectStore(STORE_NAME)
       .getAll();
-    request.onsuccess = () => resolve(request.result as Task[]);
+    request.onsuccess = () =>
+      resolve(
+        (request.result as Task[]).map((task) => ({
+          ...task,
+          startAt: task.startAt ?? "",
+          attachments: task.attachments ?? [],
+        })),
+      );
     request.onerror = () => reject(request.error);
     request.transaction.oncomplete = () => database.close();
   });
@@ -147,6 +161,37 @@ function isSameLocalDay(first: Date, second: Date) {
 
 function localDayStart(date = new Date()) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function toLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function fromLocalDateKey(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function addLocalDays(date: Date, amount: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function localDayDifference(start: Date, end: Date) {
+  const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  return Math.round((endUtc - startUtc) / 86_400_000);
+}
+
+function formatGanttDay(date: Date) {
+  return {
+    day: new Intl.DateTimeFormat("ja-JP", { day: "numeric" }).format(date),
+    weekday: new Intl.DateTimeFormat("ja-JP", { weekday: "short" }).format(date),
+  };
 }
 
 function isComplete(task: Task) {
@@ -235,6 +280,9 @@ function sortTasks(tasks: Task[]) {
 export function TodoApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeView, setActiveView] = useState<ViewKey>("all");
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("list");
+  const [timelineStart, setTimelineStart] = useState("");
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -247,6 +295,11 @@ export function TodoApp() {
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    const savedDisplayMode = window.localStorage.getItem("totonou-display-mode");
+    if (savedDisplayMode === "list" || savedDisplayMode === "kanban" || savedDisplayMode === "gantt") {
+      setDisplayMode(savedDisplayMode);
+    }
+    setTimelineStart(toLocalDateKey(localDayStart()));
     setTodayText(
       new Intl.DateTimeFormat("ja-JP", {
         year: "numeric",
@@ -316,9 +369,26 @@ export function TodoApp() {
     });
   }, [activeView, search, tasks]);
 
+  const timelineDays = useMemo(() => {
+    if (!timelineStart) return [];
+    const start = fromLocalDateKey(timelineStart);
+    return Array.from({ length: GANTT_DAYS }, (_, index) => addLocalDays(start, index));
+  }, [timelineStart]);
+
+  function switchDisplayMode(mode: DisplayMode) {
+    setDisplayMode(mode);
+    window.localStorage.setItem("totonou-display-mode", mode);
+  }
+
   function openCreateForm() {
     setEditingId(null);
     setForm(initialForm);
+    setIsFormOpen(true);
+  }
+
+  function openCreateForStatus(status: TaskStatus) {
+    setEditingId(null);
+    setForm({ ...initialForm, status });
     setIsFormOpen(true);
   }
 
@@ -328,6 +398,7 @@ export function TodoApp() {
       title: task.title,
       description: task.description,
       status: task.status,
+      startAt: toLocalInput(task.startAt),
       dueAt: toLocalInput(task.dueAt),
       tags: task.tags.join("、"),
       requester: task.requester,
@@ -349,8 +420,12 @@ export function TodoApp() {
       titleInputRef.current?.focus();
       return;
     }
-    setIsSaving(true);
     const previousTask = editingId ? tasks.find((task) => task.id === editingId) : undefined;
+    if (form.startAt && form.dueAt && new Date(form.startAt) > new Date(form.dueAt)) {
+      setNotice("期限は開始日時以降に設定してください");
+      return;
+    }
+    setIsSaving(true);
     const now = new Date().toISOString();
     const nextStatus = form.status;
     const task: Task = {
@@ -358,6 +433,7 @@ export function TodoApp() {
       title,
       description: form.description.trim(),
       status: nextStatus,
+      startAt: form.startAt ? new Date(form.startAt).toISOString() : "",
       dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : "",
       tags: parseTags(form.tags),
       requester: form.requester.trim(),
@@ -384,12 +460,13 @@ export function TodoApp() {
     }
   }
 
-  async function toggleComplete(task: Task) {
+  async function moveTaskStatus(task: Task, nextStatus: TaskStatus) {
+    if (task.status === nextStatus) return;
     const now = new Date().toISOString();
     const nextTask: Task = {
       ...task,
-      status: task.status === "done" ? "open" : "done",
-      completedAt: task.status === "done" ? "" : now,
+      status: nextStatus,
+      completedAt: nextStatus === "done" ? task.completedAt || now : "",
       updatedAt: now,
     };
     setTasks((current) =>
@@ -397,13 +474,48 @@ export function TodoApp() {
     );
     try {
       await writeTask(nextTask);
-      setNotice(nextTask.status === "done" ? "完了にしました" : "未着手に戻しました");
+      setNotice(`「${statusLabels[nextStatus]}」へ移動しました`);
     } catch {
       setTasks((current) =>
         sortTasks(current.map((item) => (item.id === task.id ? task : item))),
       );
       setNotice("変更を保存できませんでした");
     }
+  }
+
+  async function toggleComplete(task: Task) {
+    await moveTaskStatus(task, task.status === "done" ? "open" : "done");
+  }
+
+  function handleKanbanDrop(event: DragEvent<HTMLDivElement>, status: TaskStatus) {
+    event.preventDefault();
+    const task = tasks.find((item) => item.id === draggingTaskId);
+    setDraggingTaskId(null);
+    if (task) void moveTaskStatus(task, status);
+  }
+
+  function shiftTimeline(days: number) {
+    if (!timelineStart) return;
+    setTimelineStart(toLocalDateKey(addLocalDays(fromLocalDateKey(timelineStart), days)));
+  }
+
+  function resetTimeline() {
+    setTimelineStart(toLocalDateKey(localDayStart()));
+  }
+
+  function getGanttBarStyle(task: Task): CSSProperties | null {
+    if (!timelineStart || !task.dueAt) return null;
+    const rangeStart = fromLocalDateKey(timelineStart);
+    const taskStart = localDayStart(new Date(task.startAt || task.dueAt));
+    const taskEnd = localDayStart(new Date(task.dueAt));
+    const rawStart = localDayDifference(rangeStart, taskStart);
+    const rawEnd = localDayDifference(rangeStart, taskEnd);
+    if (rawEnd < 0 || rawStart >= GANTT_DAYS) return null;
+    const clippedStart = Math.max(0, rawStart);
+    const clippedEnd = Math.min(GANTT_DAYS - 1, Math.max(rawStart, rawEnd));
+    return {
+      gridColumn: `${clippedStart + 1} / span ${clippedEnd - clippedStart + 1}`,
+    };
   }
 
   async function deleteTask(task: Task) {
@@ -551,21 +663,204 @@ export function TodoApp() {
               <h2 id="task-list-heading">{viewLabels[activeView]}</h2>
               <p>{visibleTasks.length}件を表示</p>
             </div>
-            <label className="search-box">
-              <span aria-hidden="true">⌕</span>
-              <span className="sr-only">ToDoを検索</span>
-              <input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="タイトル・タグ・依頼元で検索"
-              />
-            </label>
+            <div className="toolbar-actions">
+              <div className="display-switch" role="group" aria-label="表示方法">
+                <button
+                  type="button"
+                  className={displayMode === "list" ? "active" : ""}
+                  onClick={() => switchDisplayMode("list")}
+                >
+                  <span aria-hidden="true">☷</span> 一覧
+                </button>
+                <button
+                  type="button"
+                  className={displayMode === "kanban" ? "active" : ""}
+                  onClick={() => switchDisplayMode("kanban")}
+                >
+                  <span aria-hidden="true">▥</span> かんばん
+                </button>
+                <button
+                  type="button"
+                  className={displayMode === "gantt" ? "active" : ""}
+                  onClick={() => switchDisplayMode("gantt")}
+                >
+                  <span aria-hidden="true">▬</span> ガント
+                </button>
+              </div>
+              <label className="search-box">
+                <span aria-hidden="true">⌕</span>
+                <span className="sr-only">ToDoを検索</span>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="タイトル・タグ・依頼元で検索"
+                />
+              </label>
+            </div>
           </div>
 
           {storageError && (
             <div className="error-banner" role="alert">
               端末内の保存領域を利用できません。ブラウザのプライベートモードや保存設定をご確認ください。
+            </div>
+          )}
+          {!isLoading && visibleTasks.length > 0 && displayMode === "kanban" && (
+            <div className="kanban-wrap">
+              <p className="view-hint">カードは期限順です。PCでは列へドラッグ、スマホではカード内の状態から移動できます。</p>
+              <div className="kanban-board" aria-label="かんばんボード">
+                {(Object.keys(statusLabels) as TaskStatus[]).map((status) => {
+                  const columnTasks = visibleTasks.filter((task) => task.status === status);
+                  return (
+                    <div
+                      className={`kanban-column kanban-${status}`}
+                      key={status}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                      }}
+                      onDrop={(event) => handleKanbanDrop(event, status)}
+                    >
+                      <header className="kanban-column-header">
+                        <span className={`kanban-status-dot status-${status}`} aria-hidden="true" />
+                        <h3>{statusLabels[status]}</h3>
+                        <strong>{columnTasks.length}</strong>
+                      </header>
+                      <div className="kanban-cards">
+                        {columnTasks.map((task) => {
+                          const deadline = dueLabel(task);
+                          return (
+                            <article
+                              className={draggingTaskId === task.id ? "kanban-card dragging" : "kanban-card"}
+                              draggable
+                              key={task.id}
+                              onDragStart={(event) => {
+                                setDraggingTaskId(task.id);
+                                event.dataTransfer.effectAllowed = "move";
+                                event.dataTransfer.setData("text/plain", task.id);
+                              }}
+                              onDragEnd={() => setDraggingTaskId(null)}
+                            >
+                              <button className="kanban-card-title" type="button" onClick={() => openEditForm(task)}>
+                                {task.title}
+                              </button>
+                              {task.tags.length > 0 && (
+                                <div className="tag-row">
+                                  {task.tags.slice(0, 3).map((tag) => <span className="tag" key={tag}>#{tag}</span>)}
+                                </div>
+                              )}
+                              {task.description && <p>{task.description}</p>}
+                              <div className="kanban-card-meta">
+                                <span className={`due-label ${deadline.tone}`}>◷ {deadline.label}</span>
+                                {task.assignee && <span>担当 {task.assignee}</span>}
+                                {task.attachments.length > 0 && <span>添付 {task.attachments.length}件</span>}
+                              </div>
+                              <label className="kanban-move">
+                                <span>状態を変更</span>
+                                <select
+                                  aria-label={`${task.title}の状態を変更`}
+                                  value={task.status}
+                                  onChange={(event) => void moveTaskStatus(task, event.target.value as TaskStatus)}
+                                >
+                                  {(Object.keys(statusLabels) as TaskStatus[]).map((option) => (
+                                    <option value={option} key={option}>{statusLabels[option]}</option>
+                                  ))}
+                                </select>
+                              </label>
+                            </article>
+                          );
+                        })}
+                        {columnTasks.length === 0 && (
+                          <div className="kanban-empty">カードをここへ移動できます</div>
+                        )}
+                      </div>
+                      <button className="kanban-add" type="button" onClick={() => openCreateForStatus(status)}>
+                        ＋ ToDoを追加
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {!isLoading && visibleTasks.length > 0 && displayMode === "gantt" && (
+            <div className="gantt-view">
+              <div className="gantt-toolbar">
+                <div>
+                  <strong>14日間の予定</strong>
+                  <span>
+                    {timelineDays.length > 0
+                      ? `${timelineDays[0].getMonth() + 1}/${timelineDays[0].getDate()}〜${timelineDays[timelineDays.length - 1].getMonth() + 1}/${timelineDays[timelineDays.length - 1].getDate()}`
+                      : "日付を準備中"}
+                  </span>
+                </div>
+                <div className="gantt-nav" aria-label="ガントチャートの期間移動">
+                  <button type="button" onClick={() => shiftTimeline(-GANTT_DAYS)} aria-label="前の14日">‹</button>
+                  <button type="button" onClick={resetTimeline}>今日</button>
+                  <button type="button" onClick={() => shiftTimeline(GANTT_DAYS)} aria-label="次の14日">›</button>
+                </div>
+              </div>
+              <div className="gantt-scroll">
+                <div className="gantt-chart" style={{ "--gantt-days": GANTT_DAYS } as CSSProperties}>
+                  <div className="gantt-header-row">
+                    <div className="gantt-task-heading">ToDo</div>
+                    <div className="gantt-days-heading">
+                      {timelineDays.map((day) => {
+                        const label = formatGanttDay(day);
+                        const isToday = isSameLocalDay(day, new Date());
+                        const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+                        return (
+                          <div className={`${isToday ? "today " : ""}${isWeekend ? "weekend" : ""}`} key={toLocalDateKey(day)}>
+                            <strong>{label.day}</strong>
+                            <span>{label.weekday}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {visibleTasks.map((task) => {
+                    const barStyle = getGanttBarStyle(task);
+                    return (
+                      <div className="gantt-row" key={task.id}>
+                        <button className="gantt-task-cell" type="button" onClick={() => openEditForm(task)}>
+                          <span><i className={`status-${task.status}`} />{task.title}</span>
+                          <small>{task.dueAt ? `期限 ${formatDateTime(task.dueAt)}` : "期限未設定"}</small>
+                        </button>
+                        <div className="gantt-calendar">
+                          {timelineDays.map((day, index) => (
+                            <div
+                              className={`gantt-day-cell ${isSameLocalDay(day, new Date()) ? "today" : ""} ${day.getDay() === 0 || day.getDay() === 6 ? "weekend" : ""}`}
+                              key={toLocalDateKey(day)}
+                              style={{ gridColumn: index + 1, gridRow: 1 }}
+                            />
+                          ))}
+                          {barStyle && (
+                            <button
+                              type="button"
+                              className={`gantt-bar status-${task.status} ${task.startAt ? "range" : "milestone"}`}
+                              style={{ ...barStyle, gridRow: 1 }}
+                              onClick={() => openEditForm(task)}
+                              title={`${task.title}を編集`}
+                            >
+                              <span>{task.title}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              {visibleTasks.some((task) => !task.dueAt) && (
+                <div className="undated-tasks">
+                  <strong>期限未設定</strong>
+                  <div>
+                    {visibleTasks.filter((task) => !task.dueAt).map((task) => (
+                      <button type="button" key={task.id} onClick={() => openEditForm(task)}>{task.title}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -590,7 +885,7 @@ export function TodoApp() {
                 </button>
               )}
             </div>
-          ) : (
+          ) : displayMode === "list" ? (
             <div className="task-list">
               {visibleTasks.map((task) => {
                 const deadline = dueLabel(task);
@@ -618,6 +913,7 @@ export function TodoApp() {
                       )}
 
                       <div className="task-meta">
+                        {task.startAt && <span><b>開始</b>{formatDateTime(task.startAt)}</span>}
                         <span className={`due-label ${deadline.tone}`}>
                           <span aria-hidden="true">◷</span> {deadline.label}
                         </span>
@@ -656,7 +952,7 @@ export function TodoApp() {
                 );
               })}
             </div>
-          )}
+          ) : null}
         </section>
       </main>
 
@@ -706,7 +1002,15 @@ export function TodoApp() {
 
                 <div className="form-grid">
                   <label className="form-field">
-                    <span>期限</span>
+                    <span>開始日時</span>
+                    <input
+                      type="datetime-local"
+                      value={form.startAt}
+                      onChange={(event) => setForm((current) => ({ ...current, startAt: event.target.value }))}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>期限日時</span>
                     <input
                       type="datetime-local"
                       value={form.dueAt}

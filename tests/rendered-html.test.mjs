@@ -35,6 +35,9 @@ test("個人向けToDo画面をサーバーレンダリングする", async () =
   assert.match(html, /新しいToDo/);
   assert.match(html, /この端末だけに保存/);
   assert.match(html, /期限超過/);
+  assert.match(html, /一覧/);
+  assert.match(html, /かんばん/);
+  assert.match(html, /ガント/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
 });
 
@@ -53,6 +56,14 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /ファイル添付/);
   assert.match(app, /indexedDB\.open/);
   assert.match(app, /MAX_FILE_SIZE/);
+  assert.match(app, /startAt: task\.startAt \?\? ""/);
+  assert.match(app, /期限は開始日時以降に設定してください/);
+  assert.match(app, /moveTaskStatus/);
+  assert.match(app, /handleKanbanDrop/);
+  assert.match(app, /GANTT_DAYS = 14/);
+  assert.match(app, /14日間の予定/);
+  assert.match(css, /\.kanban-board/);
+  assert.match(css, /\.gantt-chart/);
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion/);

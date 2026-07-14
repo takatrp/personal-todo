@@ -410,9 +410,58 @@ select:focus-visible {
   font-size: 11px;
 }
 
+.toolbar-actions {
+  display: flex;
+  width: min(650px, 70%);
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.display-switch {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f5f4f1;
+}
+
+.display-switch button {
+  display: inline-flex;
+  min-height: 35px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.display-switch button:hover {
+  color: var(--ink);
+}
+
+.display-switch button.active {
+  color: var(--primary);
+  background: #fff;
+  box-shadow: 0 2px 9px rgba(31, 36, 48, 0.09);
+}
+
+.display-switch button span {
+  font-size: 15px;
+  line-height: 1;
+}
+
 .search-box {
   display: flex;
-  width: min(340px, 48%);
+  width: min(300px, 48%);
   min-height: 43px;
   align-items: center;
   gap: 8px;
@@ -671,6 +720,447 @@ select:focus-visible {
 .task-actions .delete-action:hover {
   color: var(--red);
   background: var(--red-soft);
+}
+
+.view-hint {
+  margin: -3px 0 12px;
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.kanban-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(225px, 1fr));
+  gap: 11px;
+  padding: 2px 2px 12px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-color: #c9c6d6 transparent;
+}
+
+.kanban-column {
+  display: flex;
+  min-height: 360px;
+  flex-direction: column;
+  padding: 11px;
+  border: 1px solid #e4e2dc;
+  border-radius: 15px;
+  background: #f5f4f1;
+}
+
+.kanban-column-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 3px 8px;
+}
+
+.kanban-column-header h3 {
+  margin: 0;
+  font-size: 11.5px;
+}
+
+.kanban-column-header strong {
+  display: grid;
+  min-width: 23px;
+  height: 23px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--muted);
+  background: #e8e7e2;
+  font-size: 9px;
+}
+
+.kanban-status-dot,
+.gantt-task-cell i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9a9eaa;
+}
+
+.kanban-status-dot.status-doing,
+.gantt-task-cell i.status-doing { background: var(--primary); }
+.kanban-status-dot.status-waiting,
+.gantt-task-cell i.status-waiting { background: var(--amber); }
+.kanban-status-dot.status-done,
+.gantt-task-cell i.status-done { background: var(--sage); }
+
+.kanban-cards {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.kanban-card {
+  padding: 13px;
+  border: 1px solid #e3e1dc;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(31, 36, 48, 0.055);
+  cursor: grab;
+  transition: 150ms ease;
+}
+
+.kanban-card:hover {
+  border-color: #cbc8da;
+  box-shadow: 0 7px 18px rgba(31, 36, 48, 0.09);
+  transform: translateY(-1px);
+}
+
+.kanban-card.dragging {
+  opacity: 0.42;
+  transform: rotate(1.5deg);
+}
+
+.kanban-card-title {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.kanban-card-title:hover {
+  color: var(--primary);
+}
+
+.kanban-card > p {
+  display: -webkit-box;
+  margin: 8px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.kanban-card-meta {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.kanban-card-meta .due-label {
+  font-size: 9px;
+}
+
+.kanban-move {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid #eeece7;
+  color: var(--faint);
+  font-size: 8.5px;
+  font-weight: 700;
+}
+
+.kanban-move select {
+  width: 100%;
+  min-height: 35px;
+  padding: 0 7px;
+  border: 1px solid #dedbd5;
+  border-radius: 8px;
+  outline: 0;
+  background: #faf9f7;
+  font-size: 9.5px;
+}
+
+.kanban-empty {
+  display: grid;
+  min-height: 76px;
+  place-items: center;
+  border: 1px dashed #d6d3cc;
+  border-radius: 11px;
+  color: #a1a3aa;
+  font-size: 9px;
+}
+
+.kanban-add {
+  min-height: 40px;
+  margin-top: 9px;
+  border: 0;
+  border-radius: 10px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.kanban-add:hover {
+  color: var(--primary);
+  background: rgba(91, 91, 214, 0.08);
+}
+
+.gantt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.gantt-toolbar > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.gantt-toolbar strong {
+  font-size: 11.5px;
+}
+
+.gantt-toolbar span {
+  color: var(--faint);
+  font-size: 9.5px;
+}
+
+.gantt-nav {
+  display: flex;
+  gap: 4px;
+}
+
+.gantt-nav button {
+  min-width: 38px;
+  min-height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.gantt-nav button:hover {
+  border-color: #cac7dc;
+  color: var(--primary);
+}
+
+.gantt-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  scrollbar-color: #c9c6d6 transparent;
+}
+
+.gantt-chart {
+  min-width: 940px;
+  background: #fff;
+}
+
+.gantt-header-row,
+.gantt-row {
+  display: grid;
+  grid-template-columns: 220px minmax(720px, 1fr);
+}
+
+.gantt-header-row {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  min-height: 52px;
+  border-bottom: 1px solid var(--line);
+  background: #f8f7f4;
+}
+
+.gantt-task-heading,
+.gantt-task-cell {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  border-right: 1px solid var(--line);
+  background: #fff;
+}
+
+.gantt-task-heading {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  background: #f8f7f4;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.gantt-days-heading,
+.gantt-calendar {
+  display: grid;
+  grid-template-columns: repeat(var(--gantt-days), minmax(48px, 1fr));
+}
+
+.gantt-days-heading > div {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  border-right: 1px solid #ebe9e4;
+  color: var(--muted);
+}
+
+.gantt-days-heading strong {
+  font-size: 11px;
+}
+
+.gantt-days-heading span {
+  font-size: 8px;
+}
+
+.gantt-days-heading .weekend,
+.gantt-day-cell.weekend {
+  background: #faf7f5;
+}
+
+.gantt-days-heading .today,
+.gantt-day-cell.today {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.gantt-row {
+  min-height: 62px;
+  border-bottom: 1px solid #eeece7;
+}
+
+.gantt-row:last-child {
+  border-bottom: 0;
+}
+
+.gantt-task-cell {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  padding: 8px 13px;
+  border-top: 0;
+  border-bottom: 0;
+  border-left: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.gantt-task-cell:hover {
+  background: #faf9ff;
+}
+
+.gantt-task-cell > span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-task-cell i {
+  flex: 0 0 auto;
+}
+
+.gantt-task-cell small {
+  padding-left: 15px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-calendar {
+  position: relative;
+}
+
+.gantt-day-cell {
+  min-width: 0;
+  border-right: 1px solid #f0eee9;
+}
+
+.gantt-bar {
+  z-index: 2;
+  align-self: center;
+  height: 32px;
+  margin: 0 3px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: #858994;
+  box-shadow: 0 5px 13px rgba(31, 36, 48, 0.15);
+  cursor: pointer;
+  font-size: 8.5px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-bar:hover {
+  filter: brightness(0.94);
+}
+
+.gantt-bar.status-doing { color: #fff; background: var(--primary); }
+.gantt-bar.status-waiting { color: #fff; background: var(--amber); }
+.gantt-bar.status-done { color: #fff; background: var(--sage); }
+
+.gantt-bar.milestone {
+  border-radius: 999px;
+}
+
+.gantt-bar span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.undated-tasks {
+  display: grid;
+  gap: 8px;
+  margin-top: 13px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #f5f4f1;
+}
+
+.undated-tasks > strong {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.undated-tasks > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.undated-tasks button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.undated-tasks button:hover {
+  color: var(--primary);
+  border-color: #cac7dc;
 }
 
 .empty-state {
@@ -1102,6 +1592,32 @@ select:focus-visible {
     border-radius: 18px;
   }
 
+  .toolbar-actions {
+    width: auto;
+    flex: 1;
+    flex-wrap: wrap;
+  }
+
+  .kanban-board {
+    grid-template-columns: repeat(4, minmax(280px, 78vw));
+    margin-inline: -14px;
+    padding-inline: 14px;
+    scroll-snap-type: x proximity;
+  }
+
+  .kanban-column {
+    min-height: 330px;
+    scroll-snap-align: start;
+  }
+
+  .kanban-card {
+    cursor: default;
+  }
+
+  .kanban-move select {
+    min-height: 44px;
+  }
+
   .mobile-create-button {
     position: fixed;
     right: 20px;
@@ -1150,8 +1666,43 @@ select:focus-visible {
     gap: 13px;
   }
 
+  .toolbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .display-switch {
+    width: 100%;
+  }
+
+  .display-switch button {
+    min-height: 42px;
+    flex: 1;
+    justify-content: center;
+  }
+
   .search-box {
     width: 100%;
+  }
+
+  .gantt-toolbar {
+    align-items: flex-start;
+  }
+
+  .gantt-scroll {
+    margin-inline: -14px;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .gantt-header-row,
+  .gantt-row {
+    grid-template-columns: 172px minmax(720px, 1fr);
+  }
+
+  .gantt-nav button {
+    min-height: 44px;
   }
 
   .task-card {
