@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ClipboardEvent,
   CSSProperties,
   DragEvent,
   FormEvent,
@@ -326,6 +327,43 @@ function parseTags(value: string) {
   ).slice(0, 10);
 }
 
+function attachmentLimitMessage(existing: Attachment[], incoming: File[]) {
+  if (existing.length + incoming.length > 10) return "添付ファイルは10件までです";
+  if (incoming.some((file) => file.size > MAX_FILE_SIZE)) return "1ファイルは8MBまでです";
+  const currentSize = existing.reduce((sum, file) => sum + file.size, 0);
+  const incomingSize = incoming.reduce((sum, file) => sum + file.size, 0);
+  if (currentSize + incomingSize > MAX_TASK_ATTACHMENT_SIZE) {
+    return "添付ファイルの合計は20MBまでです";
+  }
+  return "";
+}
+
+function screenshotName(file: File, index: number) {
+  const now = new Date();
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, "0"),
+    String(now.getDate()).padStart(2, "0"),
+    "_",
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0"),
+  ].join("");
+  const subtype = file.type.split("/")[1]?.toLowerCase() || "png";
+  const extension = subtype === "jpeg" ? "jpg" : subtype.replace(/[^a-z0-9]/g, "") || "png";
+  return `スクリーンショット_${stamp}${index > 0 ? `_${index + 1}` : ""}.${extension}`;
+}
+
+function filesToAttachments(files: File[], renameAsScreenshot = false) {
+  return files.map<Attachment>((file, index) => ({
+    id: createId(),
+    name: renameAsScreenshot ? screenshotName(file, index) : file.name,
+    type: file.type || "application/octet-stream",
+    size: file.size,
+    data: file,
+  }));
+}
+
 function sortTasks(tasks: Task[]) {
   return [...tasks].sort((first, second) => {
     if (isComplete(first) !== isComplete(second)) return isComplete(first) ? 1 : -1;
@@ -348,6 +386,7 @@ export function TodoApp() {
   const [displayMode, setDisplayMode] = useState<DisplayMode>("list");
   const [timelineStart, setTimelineStart] = useState("");
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [pastingTaskId, setPastingTaskId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -731,28 +770,54 @@ export function TodoApp() {
   function handleFiles(files: FileList | null) {
     if (!files) return;
     const incoming = Array.from(files);
-    const oversized = incoming.find((file) => file.size > MAX_FILE_SIZE);
-    if (oversized) {
-      setNotice("1ファイルは8MBまでです");
+    const limitMessage = attachmentLimitMessage(form.attachments, incoming);
+    if (limitMessage) {
+      setNotice(limitMessage);
       return;
     }
-    const currentSize = form.attachments.reduce((sum, file) => sum + file.size, 0);
-    const incomingSize = incoming.reduce((sum, file) => sum + file.size, 0);
-    if (currentSize + incomingSize > MAX_TASK_ATTACHMENT_SIZE) {
-      setNotice("添付ファイルの合計は20MBまでです");
-      return;
-    }
-    const attachments = incoming.map<Attachment>((file) => ({
-      id: createId(),
-      name: file.name,
-      type: file.type || "application/octet-stream",
-      size: file.size,
-      data: file,
-    }));
+    const attachments = filesToAttachments(incoming);
     setForm((current) => ({
       ...current,
-      attachments: [...current.attachments, ...attachments].slice(0, 10),
+      attachments: [...current.attachments, ...attachments],
     }));
+  }
+
+  async function handleCardPaste(event: ClipboardEvent<HTMLElement>, task: Task) {
+    if (pastingTaskId) return;
+    const itemFiles = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    const imageFiles = itemFiles.length > 0
+      ? itemFiles
+      : Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const limitMessage = attachmentLimitMessage(task.attachments, imageFiles);
+    if (limitMessage) {
+      setNotice(limitMessage);
+      return;
+    }
+
+    const pastedAttachments = filesToAttachments(imageFiles, true);
+    const nextTask: Task = {
+      ...task,
+      attachments: [...task.attachments, ...pastedAttachments],
+      updatedAt: new Date().toISOString(),
+    };
+    setPastingTaskId(task.id);
+    try {
+      await writeTask(nextTask);
+      setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? nextTask : item)));
+      setNotice(`${pastedAttachments.length}枚の画像を「${task.title}」に添付しました`);
+    } catch {
+      setStorageError(true);
+      setNotice("画像を添付できませんでした。もう一度お試しください");
+    } finally {
+      setPastingTaskId(null);
+    }
   }
 
   function downloadAttachment(attachment: Attachment) {
@@ -966,9 +1031,11 @@ export function TodoApp() {
                           const deadline = dueLabel(task);
                           return (
                             <article
-                              className={draggingTaskId === task.id ? "kanban-card dragging" : "kanban-card"}
+                              className={`kanban-card${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}`}
                               draggable
                               key={task.id}
+                              tabIndex={0}
+                              onPaste={(event) => void handleCardPaste(event, task)}
                               onDragStart={(event) => {
                                 setDraggingTaskId(task.id);
                                 event.dataTransfer.effectAllowed = "move";
@@ -993,6 +1060,9 @@ export function TodoApp() {
                                 {task.assignee && <span>担当 {task.assignee}</span>}
                                 {task.attachments.length > 0 && <span>添付 {task.attachments.length}件</span>}
                               </div>
+                              <span className="paste-hint">
+                                {pastingTaskId === task.id ? "画像を添付中…" : `貼り付け先：${task.title}（Ctrl＋V）`}
+                              </span>
                               <label className="kanban-move">
                                 <span>状態を変更</span>
                                 <select
@@ -1128,7 +1198,12 @@ export function TodoApp() {
               {visibleTasks.map((task) => {
                 const deadline = dueLabel(task);
                 return (
-                  <article className={isComplete(task) ? "task-card completed" : "task-card"} key={task.id}>
+                  <article
+                    className={`${isComplete(task) ? "task-card completed" : "task-card"}${pastingTaskId === task.id ? " pasting" : ""}`}
+                    key={task.id}
+                    tabIndex={0}
+                    onPaste={(event) => void handleCardPaste(event, task)}
+                  >
                     <button
                       type="button"
                       className="complete-button"
@@ -1181,6 +1256,9 @@ export function TodoApp() {
                           ))}
                         </div>
                       )}
+                      <span className="paste-hint">
+                        {pastingTaskId === task.id ? "画像を添付中…" : `貼り付け先：${task.title}（Ctrl＋V）`}
+                      </span>
                     </div>
 
                     <div className="task-actions">

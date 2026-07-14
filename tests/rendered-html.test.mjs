@@ -58,6 +58,10 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /ファイル添付/);
   assert.match(app, /indexedDB\.open/);
   assert.match(app, /MAX_FILE_SIZE/);
+  assert.match(app, /function handleCardPaste/);
+  assert.match(app, /event\.clipboardData\.items/);
+  assert.match(app, /filesToAttachments\(imageFiles, true\)/);
+  assert.match(app, /貼り付け先：/);
   assert.match(app, /startAt: task\.startAt \?\? ""/);
   assert.match(app, /tabId: task\.tabId \?\? ""/);
   assert.match(app, /const DB_VERSION = 2/);
@@ -73,6 +77,8 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.gantt-chart/);
   assert.match(css, /\.scope-toolbar/);
   assert.match(css, /\.tab-modal/);
+  assert.match(css, /\.paste-hint/);
+  assert.match(css, /\.task-card:focus-within/);
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion/);
