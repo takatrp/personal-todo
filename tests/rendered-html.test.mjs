@@ -30,6 +30,8 @@ test("個人向けToDo画面をサーバーレンダリングする", async () =
 
   const html = await response.text();
   assert.match(html, /<html[^>]*lang="ja"/i);
+  assert.match(html, /すべてのToDo/);
+  assert.match(html, /タブ管理/);
   assert.match(html, /<title>ととのうToDo｜個人タスク管理<\/title>/);
   assert.match(html, /今日のToDo/);
   assert.match(html, /新しいToDo/);
@@ -57,6 +59,11 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /indexedDB\.open/);
   assert.match(app, /MAX_FILE_SIZE/);
   assert.match(app, /startAt: task\.startAt \?\? ""/);
+  assert.match(app, /tabId: task\.tabId \?\? ""/);
+  assert.match(app, /const DB_VERSION = 2/);
+  assert.match(app, /const TAB_STORE_NAME = "tabs"/);
+  assert.match(app, /removeTabAndUnassign/);
+  assert.match(app, /function showAllTasks/);
   assert.match(app, /期限は開始日時以降に設定してください/);
   assert.match(app, /moveTaskStatus/);
   assert.match(app, /handleKanbanDrop/);
@@ -64,6 +71,8 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /14日間の予定/);
   assert.match(css, /\.kanban-board/);
   assert.match(css, /\.gantt-chart/);
+  assert.match(css, /\.scope-toolbar/);
+  assert.match(css, /\.tab-modal/);
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion/);

@@ -31,6 +31,7 @@ type Task = {
   startAt: string;
   dueAt: string;
   tags: string[];
+  tabId: string;
   requester: string;
   assignee: string;
   attachments: Attachment[];
@@ -46,14 +47,23 @@ type TaskForm = {
   startAt: string;
   dueAt: string;
   tags: string;
+  tabId: string;
   requester: string;
   assignee: string;
   attachments: Attachment[];
 };
 
+type TodoTab = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 const DB_NAME = "totonou-todo";
-const DB_VERSION = 1;
-const STORE_NAME = "tasks";
+const DB_VERSION = 2;
+const TASK_STORE_NAME = "tasks";
+const TAB_STORE_NAME = "tabs";
 const MAX_FILE_SIZE = 8 * 1024 * 1024;
 const MAX_TASK_ATTACHMENT_SIZE = 20 * 1024 * 1024;
 const GANTT_DAYS = 14;
@@ -65,6 +75,7 @@ const initialForm: TaskForm = {
   startAt: "",
   dueAt: "",
   tags: "",
+  tabId: "",
   requester: "",
   assignee: "",
   attachments: [],
@@ -96,12 +107,16 @@ function openDatabase(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const database = request.result;
-      if (!database.objectStoreNames.contains(STORE_NAME)) {
-        database.createObjectStore(STORE_NAME, { keyPath: "id" });
+      if (!database.objectStoreNames.contains(TASK_STORE_NAME)) {
+        database.createObjectStore(TASK_STORE_NAME, { keyPath: "id" });
+      }
+      if (!database.objectStoreNames.contains(TAB_STORE_NAME)) {
+        database.createObjectStore(TAB_STORE_NAME, { keyPath: "id" });
       }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("データ更新がほかの画面で使用中です"));
   });
 }
 
@@ -109,14 +124,15 @@ async function readTasks(): Promise<Task[]> {
   const database = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = database
-      .transaction(STORE_NAME, "readonly")
-      .objectStore(STORE_NAME)
+      .transaction(TASK_STORE_NAME, "readonly")
+      .objectStore(TASK_STORE_NAME)
       .getAll();
     request.onsuccess = () =>
       resolve(
         (request.result as Task[]).map((task) => ({
           ...task,
           startAt: task.startAt ?? "",
+          tabId: task.tabId ?? "",
           attachments: task.attachments ?? [],
         })),
       );
@@ -128,8 +144,8 @@ async function readTasks(): Promise<Task[]> {
 async function writeTask(task: Task) {
   const database = await openDatabase();
   return new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).put(task);
+    const transaction = database.transaction(TASK_STORE_NAME, "readwrite");
+    transaction.objectStore(TASK_STORE_NAME).put(task);
     transaction.oncomplete = () => {
       database.close();
       resolve();
@@ -141,8 +157,51 @@ async function writeTask(task: Task) {
 async function removeTaskRecord(id: string) {
   const database = await openDatabase();
   return new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).delete(id);
+    const transaction = database.transaction(TASK_STORE_NAME, "readwrite");
+    transaction.objectStore(TASK_STORE_NAME).delete(id);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function readTabs(): Promise<TodoTab[]> {
+  const database = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = database
+      .transaction(TAB_STORE_NAME, "readonly")
+      .objectStore(TAB_STORE_NAME)
+      .getAll();
+    request.onsuccess = () => resolve((request.result as TodoTab[]).sort((first, second) =>
+      first.createdAt.localeCompare(second.createdAt),
+    ));
+    request.onerror = () => reject(request.error);
+    request.transaction.oncomplete = () => database.close();
+  });
+}
+
+async function writeTab(tab: TodoTab) {
+  const database = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(TAB_STORE_NAME, "readwrite");
+    transaction.objectStore(TAB_STORE_NAME).put(tab);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function removeTabAndUnassign(tabId: string, tasksToUpdate: Task[]) {
+  const database = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction([TAB_STORE_NAME, TASK_STORE_NAME], "readwrite");
+    transaction.objectStore(TAB_STORE_NAME).delete(tabId);
+    const taskStore = transaction.objectStore(TASK_STORE_NAME);
+    tasksToUpdate.forEach((task) => taskStore.put(task));
     transaction.oncomplete = () => {
       database.close();
       resolve();
@@ -277,9 +336,15 @@ function sortTasks(tasks: Task[]) {
   });
 }
 
+function sortTabs(tabs: TodoTab[]) {
+  return [...tabs].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+}
+
 export function TodoApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [tabs, setTabs] = useState<TodoTab[]>([]);
   const [activeView, setActiveView] = useState<ViewKey>("all");
+  const [activeTabId, setActiveTabId] = useState("all");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("list");
   const [timelineStart, setTimelineStart] = useState("");
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
@@ -287,12 +352,17 @@ export function TodoApp() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isTabManagerOpen, setIsTabManagerOpen] = useState(false);
+  const [isSavingTab, setIsSavingTab] = useState(false);
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [tabDraft, setTabDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<TaskForm>(initialForm);
   const [todayText, setTodayText] = useState("予定をひと目で整理");
   const [notice, setNotice] = useState("");
   const [storageError, setStorageError] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const tabInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const savedDisplayMode = window.localStorage.getItem("totonou-display-mode");
@@ -308,8 +378,11 @@ export function TodoApp() {
         weekday: "long",
       }).format(new Date()),
     );
-    readTasks()
-      .then((savedTasks) => setTasks(sortTasks(savedTasks)))
+    Promise.all([readTasks(), readTabs()])
+      .then(([savedTasks, savedTabs]) => {
+        setTasks(sortTasks(savedTasks));
+        setTabs(savedTabs);
+      })
       .catch(() => setStorageError(true))
       .finally(() => setIsLoading(false));
   }, []);
@@ -328,26 +401,54 @@ export function TodoApp() {
   }, [isFormOpen, isSaving]);
 
   useEffect(() => {
+    if (!isTabManagerOpen) return;
+    const focusTimer = window.setTimeout(() => tabInputRef.current?.focus(), 60);
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !isSavingTab) setIsTabManagerOpen(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isTabManagerOpen, isSavingTab]);
+
+  useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(""), 2800);
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  const activeTab = useMemo(
+    () => tabs.find((tab) => tab.id === activeTabId),
+    [activeTabId, tabs],
+  );
+
+  const tabNameById = useMemo(
+    () => new Map(tabs.map((tab) => [tab.id, tab.name])),
+    [tabs],
+  );
+
+  const tabScopedTasks = useMemo(
+    () => activeTabId === "all" ? tasks : tasks.filter((task) => task.tabId === activeTabId),
+    [activeTabId, tasks],
+  );
+
   const counts = useMemo(() => {
     const now = new Date();
     return {
-      all: tasks.filter((task) => !isComplete(task)).length,
-      today: tasks.filter((task) => isDueToday(task, now) && !isComplete(task)).length,
-      overdue: tasks.filter((task) => isOverdue(task, now)).length,
-      upcoming: tasks.filter((task) => isUpcoming(task, now)).length,
-      done: tasks.filter(isComplete).length,
+      all: tabScopedTasks.length,
+      today: tabScopedTasks.filter((task) => isDueToday(task, now) && !isComplete(task)).length,
+      overdue: tabScopedTasks.filter((task) => isOverdue(task, now)).length,
+      upcoming: tabScopedTasks.filter((task) => isUpcoming(task, now)).length,
+      done: tabScopedTasks.filter(isComplete).length,
     };
-  }, [tasks]);
+  }, [tabScopedTasks]);
 
   const visibleTasks = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("ja-JP");
     const now = new Date();
-    return sortTasks(tasks).filter((task) => {
+    return sortTasks(tabScopedTasks).filter((task) => {
       const matchesView =
         activeView === "all" ||
         (activeView === "today" && isDueToday(task, now) && !isComplete(task)) ||
@@ -362,12 +463,13 @@ export function TodoApp() {
         task.requester,
         task.assignee,
         task.tags.join(" "),
+        tabNameById.get(task.tabId) ?? "",
       ]
         .join(" ")
         .toLocaleLowerCase("ja-JP")
         .includes(query);
     });
-  }, [activeView, search, tasks]);
+  }, [activeView, search, tabNameById, tabScopedTasks]);
 
   const timelineDays = useMemo(() => {
     if (!timelineStart) return [];
@@ -380,15 +482,110 @@ export function TodoApp() {
     window.localStorage.setItem("totonou-display-mode", mode);
   }
 
+  function showAllTasks() {
+    setActiveTabId("all");
+    setActiveView("all");
+    setSearch("");
+  }
+
+  function openTabManager() {
+    setEditingTabId(null);
+    setTabDraft("");
+    setIsTabManagerOpen(true);
+  }
+
+  function beginEditTab(tab: TodoTab) {
+    setEditingTabId(tab.id);
+    setTabDraft(tab.name);
+    window.setTimeout(() => tabInputRef.current?.focus(), 0);
+  }
+
+  async function handleTabSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = tabDraft.trim();
+    if (!name) {
+      tabInputRef.current?.focus();
+      return;
+    }
+    const normalizedName = name.toLocaleLowerCase("ja-JP");
+    const hasDuplicate = tabs.some((tab) =>
+      tab.id !== editingTabId && tab.name.toLocaleLowerCase("ja-JP") === normalizedName,
+    );
+    if (hasDuplicate) {
+      setNotice("同じ名前のタブがすでにあります");
+      tabInputRef.current?.focus();
+      return;
+    }
+
+    const previousTab = editingTabId ? tabs.find((tab) => tab.id === editingTabId) : undefined;
+    const now = new Date().toISOString();
+    const tab: TodoTab = {
+      id: previousTab?.id ?? createId(),
+      name,
+      createdAt: previousTab?.createdAt ?? now,
+      updatedAt: now,
+    };
+    setIsSavingTab(true);
+    try {
+      await writeTab(tab);
+      setTabs((current) => sortTabs([...current.filter((item) => item.id !== tab.id), tab]));
+      setEditingTabId(null);
+      setTabDraft("");
+      setNotice(previousTab ? "タブ名を変更しました" : "タブを追加しました");
+    } catch {
+      setStorageError(true);
+      setNotice("タブを保存できませんでした。画面を再読み込みしてお試しください");
+    } finally {
+      setIsSavingTab(false);
+    }
+  }
+
+  async function deleteTab(tab: TodoTab) {
+    const taskCount = tasks.filter((task) => task.tabId === tab.id).length;
+    const message = taskCount > 0
+      ? `タブ「${tab.name}」を削除しますか？\n所属する${taskCount}件のToDoは削除されず、未分類に戻ります。`
+      : `タブ「${tab.name}」を削除しますか？`;
+    if (!window.confirm(message)) return;
+
+    const now = new Date().toISOString();
+    const updatedTasks = tasks.map((task) => task.tabId === tab.id
+      ? { ...task, tabId: "", updatedAt: now }
+      : task);
+    const tasksToUpdate = updatedTasks.filter((task) => task.tabId === "" && tasks.some((item) =>
+      item.id === task.id && item.tabId === tab.id,
+    ));
+    setIsSavingTab(true);
+    try {
+      await removeTabAndUnassign(tab.id, tasksToUpdate);
+      setTabs((current) => current.filter((item) => item.id !== tab.id));
+      setTasks(sortTasks(updatedTasks));
+      if (activeTabId === tab.id) setActiveTabId("all");
+      if (editingTabId === tab.id) {
+        setEditingTabId(null);
+        setTabDraft("");
+      }
+      setNotice("タブを削除しました。ToDoは未分類に戻しました");
+    } catch {
+      setStorageError(true);
+      setNotice("タブを削除できませんでした。もう一度お試しください");
+    } finally {
+      setIsSavingTab(false);
+    }
+  }
+
   function openCreateForm() {
     setEditingId(null);
-    setForm(initialForm);
+    setForm({ ...initialForm, tabId: activeTabId === "all" ? "" : activeTabId });
     setIsFormOpen(true);
   }
 
   function openCreateForStatus(status: TaskStatus) {
     setEditingId(null);
-    setForm({ ...initialForm, status });
+    setForm({
+      ...initialForm,
+      status,
+      tabId: activeTabId === "all" ? "" : activeTabId,
+    });
     setIsFormOpen(true);
   }
 
@@ -401,6 +598,7 @@ export function TodoApp() {
       startAt: toLocalInput(task.startAt),
       dueAt: toLocalInput(task.dueAt),
       tags: task.tags.join("、"),
+      tabId: tabs.some((tab) => tab.id === task.tabId) ? task.tabId : "",
       requester: task.requester,
       assignee: task.assignee,
       attachments: task.attachments,
@@ -436,6 +634,7 @@ export function TodoApp() {
       startAt: form.startAt ? new Date(form.startAt).toISOString() : "",
       dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : "",
       tags: parseTags(form.tags),
+      tabId: tabs.some((tab) => tab.id === form.tabId) ? form.tabId : "",
       requester: form.requester.trim(),
       assignee: form.assignee.trim(),
       attachments: form.attachments,
@@ -570,9 +769,10 @@ export function TodoApp() {
     event.preventDefault();
   }
 
+  const sectionTitle = activeTab ? `${activeTab.name}・${viewLabels[activeView]}` : viewLabels[activeView];
   const emptyTitle = search
     ? "検索に一致するToDoがありません"
-    : `${viewLabels[activeView]}はありません`;
+    : `${sectionTitle}はありません`;
 
   return (
     <div className="app-shell">
@@ -621,6 +821,41 @@ export function TodoApp() {
           </button>
         </header>
 
+        <section className="scope-toolbar" aria-label="ToDoのタブ切替">
+          <button
+            type="button"
+            className={activeTabId === "all" && activeView === "all" && !search ? "all-tasks-button active" : "all-tasks-button"}
+            onClick={showAllTasks}
+            aria-pressed={activeTabId === "all" && activeView === "all" && !search}
+          >
+            <span aria-hidden="true">☷</span>
+            <strong>すべてのToDo</strong>
+            <small>{tasks.length}件</small>
+          </button>
+          <nav className="custom-tab-list" aria-label="カスタムタブ">
+            {tabs.length === 0 ? (
+              <span className="tabs-empty-hint">タブを追加すると、仕事ごとに切り替えられます</span>
+            ) : tabs.map((tab) => {
+              const tabCount = tasks.filter((task) => task.tabId === tab.id).length;
+              return (
+                <button
+                  type="button"
+                  className={activeTabId === tab.id ? "custom-tab active" : "custom-tab"}
+                  key={tab.id}
+                  onClick={() => setActiveTabId(tab.id)}
+                  aria-pressed={activeTabId === tab.id}
+                >
+                  <span>{tab.name}</span>
+                  <small>{tabCount}</small>
+                </button>
+              );
+            })}
+          </nav>
+          <button type="button" className="manage-tabs-button" onClick={openTabManager}>
+            <span aria-hidden="true">＋</span> タブ管理
+          </button>
+        </section>
+
         <section className="stats-grid" aria-label="ToDoの集計">
           <button type="button" className="stat-card stat-today" onClick={() => setActiveView("today")}>
             <span>今日が期限</span>
@@ -660,7 +895,7 @@ export function TodoApp() {
         <section className="task-section" aria-labelledby="task-list-heading">
           <div className="section-toolbar">
             <div>
-              <h2 id="task-list-heading">{viewLabels[activeView]}</h2>
+              <h2 id="task-list-heading">{sectionTitle}</h2>
               <p>{visibleTasks.length}件を表示</p>
             </div>
             <div className="toolbar-actions">
@@ -694,7 +929,7 @@ export function TodoApp() {
                   type="search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="タイトル・タグ・依頼元で検索"
+                  placeholder="タイトル・タグ・タブ・依頼元で検索"
                 />
               </label>
             </div>
@@ -748,6 +983,9 @@ export function TodoApp() {
                                 <div className="tag-row">
                                   {task.tags.slice(0, 3).map((tag) => <span className="tag" key={tag}>#{tag}</span>)}
                                 </div>
+                              )}
+                              {task.tabId && tabNameById.has(task.tabId) && (
+                                <span className="task-tab-badge">▣ {tabNameById.get(task.tabId)}</span>
                               )}
                               {task.description && <p>{task.description}</p>}
                               <div className="kanban-card-meta">
@@ -911,6 +1149,11 @@ export function TodoApp() {
                           {task.tags.map((tag) => <span className="tag" key={tag}>#{tag}</span>)}
                         </div>
                       )}
+                      {task.tabId && tabNameById.has(task.tabId) && (
+                        <div className="task-tab-row" aria-label="所属タブ">
+                          <span className="task-tab-badge">▣ {tabNameById.get(task.tabId)}</span>
+                        </div>
+                      )}
 
                       <div className="task-meta">
                         {task.startAt && <span><b>開始</b>{formatDateTime(task.startAt)}</span>}
@@ -1029,6 +1272,16 @@ export function TodoApp() {
                     </select>
                   </label>
                   <label className="form-field">
+                    <span>タブ</span>
+                    <select
+                      value={form.tabId}
+                      onChange={(event) => setForm((current) => ({ ...current, tabId: event.target.value }))}
+                    >
+                      <option value="">未分類</option>
+                      {tabs.map((tab) => <option value={tab.id} key={tab.id}>{tab.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="form-field">
                     <span>依頼元</span>
                     <input
                       type="text"
@@ -1115,6 +1368,89 @@ export function TodoApp() {
                 </button>
               </footer>
             </form>
+          </section>
+        </div>
+      )}
+
+      {isTabManagerOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !isSavingTab) setIsTabManagerOpen(false);
+        }}>
+          <section className="tab-modal" role="dialog" aria-modal="true" aria-labelledby="tab-manager-title">
+            <header className="modal-header">
+              <div>
+                <p>ORGANIZE TASKS</p>
+                <h2 id="tab-manager-title">タブを管理</h2>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setIsTabManagerOpen(false)}
+                aria-label="閉じる"
+                disabled={isSavingTab}
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="tab-manager-content">
+              <p className="tab-manager-description">
+                ToDoを仕事や案件ごとに分けられます。タグは複数の目印、タブは主な所属先として使えます。
+              </p>
+              <form className="tab-editor" onSubmit={handleTabSubmit}>
+                <label className="form-field">
+                  <span>{editingTabId ? "タブ名を変更" : "新しいタブ名"}</span>
+                  <input
+                    ref={tabInputRef}
+                    type="text"
+                    value={tabDraft}
+                    maxLength={20}
+                    onChange={(event) => setTabDraft(event.target.value)}
+                    placeholder="例：月次業務、個人、確認待ち"
+                  />
+                </label>
+                <button type="submit" className="primary-button" disabled={isSavingTab || !tabDraft.trim()}>
+                  {isSavingTab ? "保存中…" : editingTabId ? "変更する" : "追加する"}
+                </button>
+                {editingTabId && (
+                  <button
+                    type="button"
+                    className="cancel-button"
+                    onClick={() => {
+                      setEditingTabId(null);
+                      setTabDraft("");
+                    }}
+                    disabled={isSavingTab}
+                  >
+                    変更をやめる
+                  </button>
+                )}
+              </form>
+
+              <div className="tab-manager-list" aria-label="登録済みのタブ">
+                {tabs.length === 0 ? (
+                  <div className="tab-manager-empty">
+                    <strong>タブはまだありません</strong>
+                    <span>上の入力欄から最初のタブを追加できます。</span>
+                  </div>
+                ) : tabs.map((tab) => {
+                  const tabCount = tasks.filter((task) => task.tabId === tab.id).length;
+                  return (
+                    <div className="tab-manager-item" key={tab.id}>
+                      <span className="tab-manager-icon" aria-hidden="true">▣</span>
+                      <span>
+                        <strong>{tab.name}</strong>
+                        <small>{tabCount}件のToDo</small>
+                      </span>
+                      <div>
+                        <button type="button" onClick={() => beginEditTab(tab)} disabled={isSavingTab}>改名</button>
+                        <button type="button" className="delete-action" onClick={() => void deleteTab(tab)} disabled={isSavingTab}>削除</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </section>
         </div>
       )}
