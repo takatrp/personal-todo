@@ -13,8 +13,10 @@ import {
 } from "react";
 
 type TaskStatus = "open" | "doing" | "waiting" | "done";
-type ViewKey = "all" | "today" | "overdue" | "upcoming" | "done";
+type ViewKey = "all" | "today" | "overdue" | "upcoming" | "done" | "trash";
 type DisplayMode = "list" | "kanban" | "gantt";
+type Recurrence = "none" | "daily" | "weekly" | "monthly";
+type ImportMode = "merge" | "replace";
 
 type Attachment = {
   id: string;
@@ -33,6 +35,13 @@ type Task = {
   dueAt: string;
   tags: string[];
   tabId: string;
+  reminderAt: string;
+  reminderSentAt: string;
+  recurrence: Recurrence;
+  recurrenceGeneratedAt: string;
+  recurrenceSeriesId: string;
+  recurrenceSequence: number;
+  deletedAt: string;
   requester: string;
   assignee: string;
   attachments: Attachment[];
@@ -49,6 +58,8 @@ type TaskForm = {
   dueAt: string;
   tags: string;
   tabId: string;
+  reminderAt: string;
+  recurrence: Recurrence;
   requester: string;
   assignee: string;
   attachments: Attachment[];
@@ -61,12 +72,40 @@ type TodoTab = {
   updatedAt: string;
 };
 
+type TodoTemplate = {
+  id: string;
+  name: string;
+  title: string;
+  description: string;
+  tags: string[];
+  tabId: string;
+  requester: string;
+  assignee: string;
+  recurrence: Recurrence;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type BackupAttachment = Omit<Attachment, "data"> & { dataUrl: string };
+type BackupTask = Omit<Task, "attachments"> & { attachments: BackupAttachment[] };
+type BackupPayload = {
+  format: "totonou-todo-backup";
+  formatVersion: 1;
+  dbVersion: 3;
+  exportedAt: string;
+  tasks: BackupTask[];
+  tabs: TodoTab[];
+  templates: TodoTemplate[];
+};
+
 const DB_NAME = "totonou-todo";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const TASK_STORE_NAME = "tasks";
 const TAB_STORE_NAME = "tabs";
+const TEMPLATE_STORE_NAME = "templates";
 const MAX_FILE_SIZE = 8 * 1024 * 1024;
 const MAX_TASK_ATTACHMENT_SIZE = 20 * 1024 * 1024;
+const MAX_BACKUP_FILE_SIZE = 150 * 1024 * 1024;
 const GANTT_DAYS = 14;
 
 const initialForm: TaskForm = {
@@ -77,6 +116,8 @@ const initialForm: TaskForm = {
   dueAt: "",
   tags: "",
   tabId: "",
+  reminderAt: "",
+  recurrence: "none",
   requester: "",
   assignee: "",
   attachments: [],
@@ -95,6 +136,14 @@ const viewLabels: Record<ViewKey, string> = {
   overdue: "期限超過",
   upcoming: "今後7日",
   done: "完了済み",
+  trash: "ゴミ箱",
+};
+
+const recurrenceLabels: Record<Recurrence, string> = {
+  none: "繰り返しなし",
+  daily: "毎日",
+  weekly: "毎週",
+  monthly: "毎月",
 };
 
 function createId() {
@@ -114,11 +163,37 @@ function openDatabase(): Promise<IDBDatabase> {
       if (!database.objectStoreNames.contains(TAB_STORE_NAME)) {
         database.createObjectStore(TAB_STORE_NAME, { keyPath: "id" });
       }
+      if (!database.objectStoreNames.contains(TEMPLATE_STORE_NAME)) {
+        database.createObjectStore(TEMPLATE_STORE_NAME, { keyPath: "id" });
+      }
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error("データ更新がほかの画面で使用中です"));
   });
+}
+
+function normalizeTask(task: Task): Task {
+  return {
+    ...task,
+    description: task.description ?? "",
+    status: statusLabels[task.status] ? task.status : "open",
+    startAt: task.startAt ?? "",
+    dueAt: task.dueAt ?? "",
+    tags: task.tags ?? [],
+    tabId: task.tabId ?? "",
+    reminderAt: task.reminderAt ?? "",
+    reminderSentAt: task.reminderSentAt ?? "",
+    recurrence: recurrenceLabels[task.recurrence] ? task.recurrence : "none",
+    recurrenceGeneratedAt: task.recurrenceGeneratedAt ?? "",
+    recurrenceSeriesId: task.recurrenceSeriesId ?? task.id,
+    recurrenceSequence: task.recurrenceSequence ?? 0,
+    deletedAt: task.deletedAt ?? "",
+    requester: task.requester ?? "",
+    assignee: task.assignee ?? "",
+    attachments: task.attachments ?? [],
+    completedAt: task.completedAt ?? "",
+  };
 }
 
 async function readTasks(): Promise<Task[]> {
@@ -130,12 +205,7 @@ async function readTasks(): Promise<Task[]> {
       .getAll();
     request.onsuccess = () =>
       resolve(
-        (request.result as Task[]).map((task) => ({
-          ...task,
-          startAt: task.startAt ?? "",
-          tabId: task.tabId ?? "",
-          attachments: task.attachments ?? [],
-        })),
+        (request.result as Task[]).map(normalizeTask),
       );
     request.onerror = () => reject(request.error);
     request.transaction.oncomplete = () => database.close();
@@ -147,6 +217,20 @@ async function writeTask(task: Task) {
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(TASK_STORE_NAME, "readwrite");
     transaction.objectStore(TASK_STORE_NAME).put(task);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function writeTasks(tasks: Task[]) {
+  const database = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(TASK_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(TASK_STORE_NAME);
+    tasks.forEach((task) => store.put(task));
     transaction.oncomplete = () => {
       database.close();
       resolve();
@@ -188,6 +272,78 @@ async function writeTab(tab: TodoTab) {
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(TAB_STORE_NAME, "readwrite");
     transaction.objectStore(TAB_STORE_NAME).put(tab);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function readTemplates(): Promise<TodoTemplate[]> {
+  const database = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = database
+      .transaction(TEMPLATE_STORE_NAME, "readonly")
+      .objectStore(TEMPLATE_STORE_NAME)
+      .getAll();
+    request.onsuccess = () => resolve((request.result as TodoTemplate[]).sort((first, second) =>
+      first.createdAt.localeCompare(second.createdAt),
+    ));
+    request.onerror = () => reject(request.error);
+    request.transaction.oncomplete = () => database.close();
+  });
+}
+
+async function writeTemplate(template: TodoTemplate) {
+  const database = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(TEMPLATE_STORE_NAME, "readwrite");
+    transaction.objectStore(TEMPLATE_STORE_NAME).put(template);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function removeTemplateRecord(id: string) {
+  const database = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(TEMPLATE_STORE_NAME, "readwrite");
+    transaction.objectStore(TEMPLATE_STORE_NAME).delete(id);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function writeWorkspace(
+  tasks: Task[],
+  tabs: TodoTab[],
+  templates: TodoTemplate[],
+  mode: ImportMode,
+) {
+  const database = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(
+      [TASK_STORE_NAME, TAB_STORE_NAME, TEMPLATE_STORE_NAME],
+      "readwrite",
+    );
+    const taskStore = transaction.objectStore(TASK_STORE_NAME);
+    const tabStore = transaction.objectStore(TAB_STORE_NAME);
+    const templateStore = transaction.objectStore(TEMPLATE_STORE_NAME);
+    if (mode === "replace") {
+      taskStore.clear();
+      tabStore.clear();
+      templateStore.clear();
+    }
+    tasks.forEach((task) => taskStore.put(task));
+    tabs.forEach((tab) => tabStore.put(tab));
+    templates.forEach((template) => templateStore.put(template));
     transaction.oncomplete = () => {
       database.close();
       resolve();
@@ -258,6 +414,47 @@ function isComplete(task: Task) {
   return task.status === "done";
 }
 
+function isDeleted(task: Task) {
+  return Boolean(task.deletedAt);
+}
+
+function advanceRecurringValue(value: string, recurrence: Recurrence) {
+  if (!value || recurrence === "none") return value;
+  const date = new Date(value);
+  if (recurrence === "daily") date.setDate(date.getDate() + 1);
+  if (recurrence === "weekly") date.setDate(date.getDate() + 7);
+  if (recurrence === "monthly") {
+    const originalDay = date.getDate();
+    date.setDate(1);
+    date.setMonth(date.getMonth() + 1);
+    const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    date.setDate(Math.min(originalDay, lastDay));
+  }
+  return date.toISOString();
+}
+
+function buildNextRecurringTask(task: Task, now: string): Task {
+  const recurrenceSeriesId = task.recurrenceSeriesId || task.id;
+  const recurrenceSequence = (task.recurrenceSequence || 0) + 1;
+  return {
+    ...task,
+    id: `${recurrenceSeriesId}-r${recurrenceSequence}`,
+    status: "open",
+    startAt: advanceRecurringValue(task.startAt, task.recurrence),
+    dueAt: advanceRecurringValue(task.dueAt, task.recurrence),
+    reminderAt: advanceRecurringValue(task.reminderAt, task.recurrence),
+    reminderSentAt: "",
+    recurrenceGeneratedAt: "",
+    recurrenceSeriesId,
+    recurrenceSequence,
+    deletedAt: "",
+    attachments: [],
+    createdAt: now,
+    updatedAt: now,
+    completedAt: "",
+  };
+}
+
 function isOverdue(task: Task, now = new Date()) {
   return Boolean(task.dueAt) && !isComplete(task) && new Date(task.dueAt) < now;
 }
@@ -314,6 +511,34 @@ function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === "string"
+      ? resolve(reader.result)
+      : reject(new Error("添付ファイルを変換できませんでした"));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataUrlToBlob(dataUrl: string, expectedType: string) {
+  const separator = dataUrl.indexOf(",");
+  if (separator < 0 || !dataUrl.startsWith("data:")) throw new Error("添付データの形式が不正です");
+  const header = dataUrl.slice(0, separator);
+  const encoded = dataUrl.slice(separator + 1);
+  const isBase64 = header.includes(";base64");
+  const decoded = isBase64 ? atob(encoded) : decodeURIComponent(encoded);
+  const bytes = new Uint8Array(decoded.length);
+  for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index);
+  return new Blob([bytes], { type: expectedType || "application/octet-stream" });
+}
+
+function backupFileName() {
+  const now = new Date();
+  return `totonou-todo-backup-${toLocalDateKey(now)}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}.json`;
 }
 
 function parseTags(value: string) {
@@ -378,9 +603,14 @@ function sortTabs(tabs: TodoTab[]) {
   return [...tabs].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
 }
 
+function sortTemplates(templates: TodoTemplate[]) {
+  return [...templates].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+}
+
 export function TodoApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tabs, setTabs] = useState<TodoTab[]>([]);
+  const [templates, setTemplates] = useState<TodoTemplate[]>([]);
   const [activeView, setActiveView] = useState<ViewKey>("all");
   const [activeTabId, setActiveTabId] = useState("all");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("list");
@@ -392,6 +622,8 @@ export function TodoApp() {
   const [isSaving, setIsSaving] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isTabManagerOpen, setIsTabManagerOpen] = useState(false);
+  const [isDataManagerOpen, setIsDataManagerOpen] = useState(false);
+  const [isProcessingData, setIsProcessingData] = useState(false);
   const [isSavingTab, setIsSavingTab] = useState(false);
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [tabDraft, setTabDraft] = useState("");
@@ -399,9 +631,17 @@ export function TodoApp() {
   const [form, setForm] = useState<TaskForm>(initialForm);
   const [todayText, setTodayText] = useState("予定をひと目で整理");
   const [notice, setNotice] = useState("");
+  const [undoDelete, setUndoDelete] = useState<{ task: Task; message: string } | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<{ attachment: Attachment; taskTitle: string } | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewLoadError, setPreviewLoadError] = useState(false);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">("unsupported");
   const [storageError, setStorageError] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const tabInputRef = useRef<HTMLInputElement>(null);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
+  const previewReturnFocusRef = useRef<HTMLElement | null>(null);
+  const reminderCheckRef = useRef(false);
 
   useEffect(() => {
     const savedDisplayMode = window.localStorage.getItem("totonou-display-mode");
@@ -409,6 +649,7 @@ export function TodoApp() {
       setDisplayMode(savedDisplayMode);
     }
     setTimelineStart(toLocalDateKey(localDayStart()));
+    setNotificationPermission("Notification" in window ? Notification.permission : "unsupported");
     setTodayText(
       new Intl.DateTimeFormat("ja-JP", {
         year: "numeric",
@@ -417,10 +658,11 @@ export function TodoApp() {
         weekday: "long",
       }).format(new Date()),
     );
-    Promise.all([readTasks(), readTabs()])
-      .then(([savedTasks, savedTabs]) => {
+    Promise.all([readTasks(), readTabs(), readTemplates()])
+      .then(([savedTasks, savedTabs, savedTemplates]) => {
         setTasks(sortTasks(savedTasks));
         setTabs(savedTabs);
+        setTemplates(savedTemplates);
       })
       .catch(() => setStorageError(true))
       .finally(() => setIsLoading(false));
@@ -453,10 +695,88 @@ export function TodoApp() {
   }, [isTabManagerOpen, isSavingTab]);
 
   useEffect(() => {
+    if (!isDataManagerOpen) return;
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !isProcessingData) setIsDataManagerOpen(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [isDataManagerOpen, isProcessingData]);
+
+  useEffect(() => {
     if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(""), 2800);
+    const timer = window.setTimeout(() => {
+      setNotice("");
+      setUndoDelete(null);
+    }, undoDelete?.message === notice ? 6500 : 2800);
     return () => window.clearTimeout(timer);
-  }, [notice]);
+  }, [notice, undoDelete]);
+
+  useEffect(() => {
+    if (!previewTarget) {
+      setPreviewUrl("");
+      return;
+    }
+    const objectUrl = URL.createObjectURL(previewTarget.attachment.data);
+    setPreviewLoadError(false);
+    setPreviewUrl(objectUrl);
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewTarget(null);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+      window.removeEventListener("keydown", handleEscape);
+      window.setTimeout(() => previewReturnFocusRef.current?.focus(), 0);
+    };
+  }, [previewTarget]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const checkReminders = async () => {
+      if (reminderCheckRef.current) return;
+      const now = new Date();
+      const dueReminders = tasks.filter((task) =>
+        !isDeleted(task) &&
+        !isComplete(task) &&
+        Boolean(task.reminderAt) &&
+        !task.reminderSentAt &&
+        new Date(task.reminderAt) <= now,
+      );
+      if (dueReminders.length === 0) return;
+      reminderCheckRef.current = true;
+      const sentAt = now.toISOString();
+      const updated = dueReminders.map((task) => ({ ...task, reminderSentAt: sentAt, updatedAt: sentAt }));
+      try {
+        await writeTasks(updated);
+        const updatedById = new Map(updated.map((task) => [task.id, task]));
+        setTasks((current) => sortTasks(current.map((task) => updatedById.get(task.id) ?? task)));
+        dueReminders.forEach((task) => {
+          if ("Notification" in window && Notification.permission === "granted") {
+            try {
+              new Notification("ToDoリマインダー", {
+                body: `「${task.title}」の確認時間です。`,
+                tag: `totonou-${task.id}-${task.reminderAt}`,
+              });
+            } catch {
+              // 画面内通知は下で必ず表示します。
+            }
+          }
+        });
+        const first = dueReminders[0];
+        setNotice(dueReminders.length === 1
+          ? `リマインダー：「${first.title}」の確認時間です`
+          : `${dueReminders.length}件のリマインダーがあります`);
+      } catch {
+        setStorageError(true);
+      } finally {
+        reminderCheckRef.current = false;
+      }
+    };
+    void checkReminders();
+    const timer = window.setInterval(() => void checkReminders(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [isLoading, tasks]);
 
   const activeTab = useMemo(
     () => tabs.find((tab) => tab.id === activeTabId),
@@ -468,9 +788,14 @@ export function TodoApp() {
     [tabs],
   );
 
-  const tabScopedTasks = useMemo(
+  const allTabScopedTasks = useMemo(
     () => activeTabId === "all" ? tasks : tasks.filter((task) => task.tabId === activeTabId),
     [activeTabId, tasks],
+  );
+
+  const tabScopedTasks = useMemo(
+    () => allTabScopedTasks.filter((task) => !isDeleted(task)),
+    [allTabScopedTasks],
   );
 
   const counts = useMemo(() => {
@@ -481,19 +806,22 @@ export function TodoApp() {
       overdue: tabScopedTasks.filter((task) => isOverdue(task, now)).length,
       upcoming: tabScopedTasks.filter((task) => isUpcoming(task, now)).length,
       done: tabScopedTasks.filter(isComplete).length,
+      trash: allTabScopedTasks.filter(isDeleted).length,
     };
-  }, [tabScopedTasks]);
+  }, [allTabScopedTasks, tabScopedTasks]);
 
   const visibleTasks = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("ja-JP");
     const now = new Date();
-    return sortTasks(tabScopedTasks).filter((task) => {
+    const sourceTasks = activeView === "trash" ? allTabScopedTasks : tabScopedTasks;
+    return sortTasks(sourceTasks).filter((task) => {
       const matchesView =
-        activeView === "all" ||
+        (activeView === "all" && !isDeleted(task)) ||
         (activeView === "today" && isDueToday(task, now) && !isComplete(task)) ||
         (activeView === "overdue" && isOverdue(task, now)) ||
         (activeView === "upcoming" && isUpcoming(task, now)) ||
-        (activeView === "done" && isComplete(task));
+        (activeView === "done" && isComplete(task)) ||
+        (activeView === "trash" && isDeleted(task));
       if (!matchesView) return false;
       if (!query) return true;
       return [
@@ -508,13 +836,25 @@ export function TodoApp() {
         .toLocaleLowerCase("ja-JP")
         .includes(query);
     });
-  }, [activeView, search, tabNameById, tabScopedTasks]);
+  }, [activeView, allTabScopedTasks, search, tabNameById, tabScopedTasks]);
 
   const timelineDays = useMemo(() => {
     if (!timelineStart) return [];
     const start = fromLocalDateKey(timelineStart);
     return Array.from({ length: GANTT_DAYS }, (_, index) => addLocalDays(start, index));
   }, [timelineStart]);
+
+  const effectiveDisplayMode: DisplayMode = activeView === "trash" ? "list" : displayMode;
+  const activeTaskCount = useMemo(() => tasks.filter((task) => !isDeleted(task)).length, [tasks]);
+  const trashTaskCount = useMemo(() => tasks.filter(isDeleted).length, [tasks]);
+  const totalAttachmentSize = useMemo(() => tasks.reduce(
+    (total, task) => total + task.attachments.reduce((sum, attachment) => sum + attachment.size, 0),
+    0,
+  ), [tasks]);
+  const totalAttachmentCount = useMemo(() => tasks.reduce(
+    (total, task) => total + task.attachments.length,
+    0,
+  ), [tasks]);
 
   function switchDisplayMode(mode: DisplayMode) {
     setDisplayMode(mode);
@@ -638,6 +978,8 @@ export function TodoApp() {
       dueAt: toLocalInput(task.dueAt),
       tags: task.tags.join("、"),
       tabId: tabs.some((tab) => tab.id === task.tabId) ? task.tabId : "",
+      reminderAt: toLocalInput(task.reminderAt),
+      recurrence: task.recurrence,
       requester: task.requester,
       assignee: task.assignee,
       attachments: task.attachments,
@@ -665,8 +1007,10 @@ export function TodoApp() {
     setIsSaving(true);
     const now = new Date().toISOString();
     const nextStatus = form.status;
-    const task: Task = {
-      id: previousTask?.id ?? createId(),
+    const taskId = previousTask?.id ?? createId();
+    const reminderAt = form.reminderAt ? new Date(form.reminderAt).toISOString() : "";
+    let task: Task = {
+      id: taskId,
       title,
       description: form.description.trim(),
       status: nextStatus,
@@ -674,6 +1018,13 @@ export function TodoApp() {
       dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : "",
       tags: parseTags(form.tags),
       tabId: tabs.some((tab) => tab.id === form.tabId) ? form.tabId : "",
+      reminderAt,
+      reminderSentAt: previousTask?.reminderAt === reminderAt ? previousTask.reminderSentAt : "",
+      recurrence: form.recurrence,
+      recurrenceGeneratedAt: previousTask?.recurrenceGeneratedAt ?? "",
+      recurrenceSeriesId: previousTask?.recurrenceSeriesId || taskId,
+      recurrenceSequence: previousTask?.recurrenceSequence ?? 0,
+      deletedAt: previousTask?.deletedAt ?? "",
       requester: form.requester.trim(),
       assignee: form.assignee.trim(),
       attachments: form.attachments,
@@ -683,13 +1034,28 @@ export function TodoApp() {
         nextStatus === "done" ? previousTask?.completedAt || now : "",
     };
 
+    const shouldGenerateNext =
+      nextStatus === "done" &&
+      previousTask?.status !== "done" &&
+      task.recurrence !== "none" &&
+      !task.recurrenceGeneratedAt;
+    const nextRecurringTask = shouldGenerateNext ? buildNextRecurringTask(task, now) : null;
+    if (nextRecurringTask) task = { ...task, recurrenceGeneratedAt: now };
+
     try {
-      await writeTask(task);
+      if (nextRecurringTask) await writeTasks([task, nextRecurringTask]);
+      else await writeTask(task);
       setTasks((current) =>
-        sortTasks([...current.filter((item) => item.id !== task.id), task]),
+        sortTasks([
+          ...current.filter((item) => item.id !== task.id && item.id !== nextRecurringTask?.id),
+          task,
+          ...(nextRecurringTask ? [nextRecurringTask] : []),
+        ]),
       );
       setIsFormOpen(false);
-      setNotice(previousTask ? "ToDoを更新しました" : "ToDoを登録しました");
+      setNotice(nextRecurringTask
+        ? "ToDoを保存し、次回分を作成しました"
+        : previousTask ? "ToDoを更新しました" : "ToDoを登録しました");
     } catch {
       setStorageError(true);
       setNotice("保存できませんでした。もう一度お試しください");
@@ -701,21 +1067,38 @@ export function TodoApp() {
   async function moveTaskStatus(task: Task, nextStatus: TaskStatus) {
     if (task.status === nextStatus) return;
     const now = new Date().toISOString();
-    const nextTask: Task = {
+    let nextTask: Task = {
       ...task,
       status: nextStatus,
       completedAt: nextStatus === "done" ? task.completedAt || now : "",
       updatedAt: now,
     };
+    const nextRecurringTask =
+      nextStatus === "done" &&
+      task.recurrence !== "none" &&
+      !task.recurrenceGeneratedAt
+        ? buildNextRecurringTask(nextTask, now)
+        : null;
+    if (nextRecurringTask) nextTask = { ...nextTask, recurrenceGeneratedAt: now };
     setTasks((current) =>
-      sortTasks(current.map((item) => (item.id === task.id ? nextTask : item))),
+      sortTasks([
+        ...current.filter((item) => item.id !== task.id && item.id !== nextRecurringTask?.id),
+        nextTask,
+        ...(nextRecurringTask ? [nextRecurringTask] : []),
+      ]),
     );
     try {
-      await writeTask(nextTask);
-      setNotice(`「${statusLabels[nextStatus]}」へ移動しました`);
+      if (nextRecurringTask) await writeTasks([nextTask, nextRecurringTask]);
+      else await writeTask(nextTask);
+      setNotice(nextRecurringTask
+        ? `「${statusLabels[nextStatus]}」へ移動し、次回分を作成しました`
+        : `「${statusLabels[nextStatus]}」へ移動しました`);
     } catch {
       setTasks((current) =>
-        sortTasks(current.map((item) => (item.id === task.id ? task : item))),
+        sortTasks([
+          ...current.filter((item) => item.id !== task.id && item.id !== nextRecurringTask?.id),
+          task,
+        ]),
       );
       setNotice("変更を保存できませんでした");
     }
@@ -757,13 +1140,44 @@ export function TodoApp() {
   }
 
   async function deleteTask(task: Task) {
-    if (!window.confirm(`「${task.title}」を削除しますか？`)) return;
+    const now = new Date().toISOString();
+    const deletedTask = { ...task, deletedAt: now, updatedAt: now };
+    try {
+      await writeTask(deletedTask);
+      setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? deletedTask : item)));
+      const message = `「${task.title}」をゴミ箱へ移動しました`;
+      setUndoDelete({ task, message });
+      setNotice(message);
+    } catch {
+      setNotice("削除できませんでした");
+    }
+  }
+
+  async function restoreTask(task: Task) {
+    const restoredTask = { ...task, deletedAt: "", updatedAt: new Date().toISOString() };
+    try {
+      await writeTask(restoredTask);
+      setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? restoredTask : item)));
+      setUndoDelete(null);
+      setNotice(`「${task.title}」を元に戻しました`);
+    } catch {
+      setNotice("ToDoを元に戻せませんでした");
+    }
+  }
+
+  async function undoLastDelete() {
+    if (!undoDelete) return;
+    await restoreTask(undoDelete.task);
+  }
+
+  async function permanentlyDeleteTask(task: Task) {
+    if (!window.confirm(`「${task.title}」を完全に削除しますか？\n添付ファイルも削除され、元に戻せません。`)) return;
     try {
       await removeTaskRecord(task.id);
       setTasks((current) => current.filter((item) => item.id !== task.id));
-      setNotice("ToDoを削除しました");
+      setNotice("ToDoを完全に削除しました");
     } catch {
-      setNotice("削除できませんでした");
+      setNotice("完全に削除できませんでした");
     }
   }
 
@@ -820,6 +1234,247 @@ export function TodoApp() {
     }
   }
 
+  function openImagePreview(attachment: Attachment, taskTitle: string, trigger?: HTMLElement) {
+    if (!attachment.type.startsWith("image/")) {
+      downloadAttachment(attachment);
+      return;
+    }
+    previewReturnFocusRef.current = trigger ?? null;
+    setPreviewTarget({ attachment, taskTitle });
+  }
+
+  function closeImagePreview() {
+    setPreviewTarget(null);
+  }
+
+  function applyTemplate(template: TodoTemplate) {
+    const hasDraft = Boolean(
+      form.title.trim() ||
+      form.description.trim() ||
+      form.tags.trim() ||
+      form.requester.trim() ||
+      form.assignee.trim(),
+    );
+    if (hasDraft && !window.confirm("現在入力している内容をテンプレートで置き換えますか？")) return;
+    setForm({
+      ...initialForm,
+      title: template.title,
+      description: template.description,
+      tags: template.tags.join("、"),
+      tabId: tabs.some((tab) => tab.id === template.tabId) ? template.tabId : "",
+      requester: template.requester,
+      assignee: template.assignee,
+      recurrence: template.recurrence,
+    });
+  }
+
+  function createFromTemplate(template: TodoTemplate) {
+    setEditingId(null);
+    setForm({
+      ...initialForm,
+      title: template.title,
+      description: template.description,
+      tags: template.tags.join("、"),
+      tabId: tabs.some((tab) => tab.id === template.tabId) ? template.tabId : "",
+      requester: template.requester,
+      assignee: template.assignee,
+      recurrence: template.recurrence,
+    });
+    setIsDataManagerOpen(false);
+    setIsFormOpen(true);
+  }
+
+  async function saveCurrentAsTemplate() {
+    if (!form.title.trim()) {
+      setNotice("テンプレートにするタイトルを入力してください");
+      titleInputRef.current?.focus();
+      return;
+    }
+    const requestedName = window.prompt("テンプレート名を入力してください", form.title.trim());
+    const name = requestedName?.trim();
+    if (!name) return;
+    const previous = templates.find((template) =>
+      template.name.toLocaleLowerCase("ja-JP") === name.toLocaleLowerCase("ja-JP"),
+    );
+    if (previous && !window.confirm(`テンプレート「${previous.name}」を上書きしますか？`)) return;
+    const now = new Date().toISOString();
+    const template: TodoTemplate = {
+      id: previous?.id ?? createId(),
+      name,
+      title: form.title.trim(),
+      description: form.description.trim(),
+      tags: parseTags(form.tags),
+      tabId: tabs.some((tab) => tab.id === form.tabId) ? form.tabId : "",
+      requester: form.requester.trim(),
+      assignee: form.assignee.trim(),
+      recurrence: form.recurrence,
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+    };
+    try {
+      await writeTemplate(template);
+      setTemplates((current) => sortTemplates([
+        ...current.filter((item) => item.id !== template.id),
+        template,
+      ]));
+      setNotice(previous ? "テンプレートを更新しました" : "テンプレートを保存しました");
+    } catch {
+      setStorageError(true);
+      setNotice("テンプレートを保存できませんでした");
+    }
+  }
+
+  async function deleteTemplate(template: TodoTemplate) {
+    if (!window.confirm(`テンプレート「${template.name}」を削除しますか？`)) return;
+    try {
+      await removeTemplateRecord(template.id);
+      setTemplates((current) => current.filter((item) => item.id !== template.id));
+      setNotice("テンプレートを削除しました");
+    } catch {
+      setNotice("テンプレートを削除できませんでした");
+    }
+  }
+
+  async function exportBackup() {
+    setIsProcessingData(true);
+    try {
+      const backupTasks = await Promise.all(tasks.map(async (task): Promise<BackupTask> => {
+        const { attachments, ...taskData } = task;
+        return {
+          ...taskData,
+          attachments: await Promise.all(attachments.map(async (attachment) => {
+            const { data, ...attachmentData } = attachment;
+            return { ...attachmentData, dataUrl: await blobToDataUrl(data) };
+          })),
+        };
+      }));
+      const payload: BackupPayload = {
+        format: "totonou-todo-backup",
+        formatVersion: 1,
+        dbVersion: DB_VERSION,
+        exportedAt: new Date().toISOString(),
+        tasks: backupTasks,
+        tabs,
+        templates,
+      };
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      if (blob.size > MAX_BACKUP_FILE_SIZE) throw new Error("バックアップが150MBを超えています");
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = backupFileName();
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice("添付を含むバックアップを保存しました");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "バックアップを作成できませんでした");
+    } finally {
+      setIsProcessingData(false);
+    }
+  }
+
+  async function restoreBackup(file: File) {
+    if (file.size > MAX_BACKUP_FILE_SIZE) {
+      setNotice("バックアップファイルは150MBまでです");
+      return;
+    }
+    setIsProcessingData(true);
+    try {
+      const parsed = JSON.parse(await file.text()) as Partial<BackupPayload>;
+      if (
+        parsed.format !== "totonou-todo-backup" ||
+        parsed.formatVersion !== 1 ||
+        !Array.isArray(parsed.tasks) ||
+        !Array.isArray(parsed.tabs) ||
+        !Array.isArray(parsed.templates)
+      ) {
+        throw new Error("ととのうToDoのバックアップファイルではありません");
+      }
+
+      const restoredTabs = parsed.tabs as TodoTab[];
+      const restoredTemplates = parsed.templates as TodoTemplate[];
+      const tabIds = new Set(restoredTabs.map((tab) => tab.id));
+      if (tabIds.size !== restoredTabs.length || restoredTabs.some((tab) => !tab.id || !tab.name)) {
+        throw new Error("バックアップ内のタブ情報が不正です");
+      }
+      if (new Set(restoredTemplates.map((template) => template.id)).size !== restoredTemplates.length) {
+        throw new Error("バックアップ内のテンプレート情報が不正です");
+      }
+      if (restoredTemplates.some((template) => !template.id || !template.name || !template.title)) {
+        throw new Error("バックアップ内のテンプレート情報が不正です");
+      }
+
+      const restoredTasks = await Promise.all((parsed.tasks as BackupTask[]).map(async (rawTask) => {
+        if (!rawTask.id || !rawTask.title || !Array.isArray(rawTask.attachments)) {
+          throw new Error("バックアップ内のToDo情報が不正です");
+        }
+        if (rawTask.attachments.length > 10) throw new Error("添付ファイル数が上限を超えています");
+        const attachments = await Promise.all(rawTask.attachments.map(async (rawAttachment) => {
+          if (!rawAttachment.id || !rawAttachment.name || typeof rawAttachment.dataUrl !== "string") {
+            throw new Error("バックアップ内の添付情報が不正です");
+          }
+          const data = dataUrlToBlob(rawAttachment.dataUrl, rawAttachment.type);
+          if (data.size !== rawAttachment.size || data.size > MAX_FILE_SIZE) {
+            throw new Error("添付ファイルの容量が不正です");
+          }
+          return { ...rawAttachment, data } as Attachment;
+        }));
+        if (attachments.reduce((sum, attachment) => sum + attachment.size, 0) > MAX_TASK_ATTACHMENT_SIZE) {
+          throw new Error("ToDoの添付容量が上限を超えています");
+        }
+        const normalized = normalizeTask({ ...rawTask, attachments } as Task);
+        return {
+          ...normalized,
+          tabId: tabIds.has(normalized.tabId) ? normalized.tabId : "",
+        };
+      }));
+      if (new Set(restoredTasks.map((task) => task.id)).size !== restoredTasks.length) {
+        throw new Error("バックアップ内のToDo IDが重複しています");
+      }
+      const safeTemplates = restoredTemplates.map((template) => ({
+        ...template,
+        tabId: tabIds.has(template.tabId) ? template.tabId : "",
+        recurrence: recurrenceLabels[template.recurrence] ? template.recurrence : "none" as Recurrence,
+      }));
+
+      const confirmed = window.confirm(
+        `バックアップを復元しますか？\n現在のデータは置き換えられます。\n\nToDo ${restoredTasks.length}件・タブ ${restoredTabs.length}件・テンプレート ${safeTemplates.length}件`,
+      );
+      if (!confirmed) return;
+      await writeWorkspace(restoredTasks, restoredTabs, safeTemplates, "replace");
+      setTasks(sortTasks(restoredTasks));
+      setTabs(sortTabs(restoredTabs));
+      setTemplates(sortTemplates(safeTemplates));
+      setActiveTabId("all");
+      setActiveView("all");
+      setSearch("");
+      setIsDataManagerOpen(false);
+      setNotice("バックアップを復元しました");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "バックアップを復元できませんでした");
+    } finally {
+      if (restoreInputRef.current) restoreInputRef.current.value = "";
+      setIsProcessingData(false);
+    }
+  }
+
+  async function requestReminderPermission() {
+    if (!("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      setNotice("このブラウザは通知に対応していません。画面内でお知らせします");
+      return;
+    }
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      setNotice(permission === "granted"
+        ? "リマインダー通知を有効にしました"
+        : "通知は許可されていません。画面内でお知らせします");
+    } catch {
+      setNotice("通知設定を変更できませんでした");
+    }
+  }
+
   function downloadAttachment(attachment: Attachment) {
     const url = URL.createObjectURL(attachment.data);
     const link = document.createElement("a");
@@ -835,7 +1490,9 @@ export function TodoApp() {
   }
 
   const sectionTitle = activeTab ? `${activeTab.name}・${viewLabels[activeView]}` : viewLabels[activeView];
-  const emptyTitle = search
+  const emptyTitle = activeView === "trash" && !search
+    ? "ゴミ箱は空です"
+    : search
     ? "検索に一致するToDoがありません"
     : `${sectionTitle}はありません`;
 
@@ -881,9 +1538,11 @@ export function TodoApp() {
             <h1>今日のToDo</h1>
             <p className="today-label">{todayText}</p>
           </div>
-          <button className="primary-button desktop-create" type="button" onClick={openCreateForm}>
-            <span aria-hidden="true">＋</span> 新しいToDo
-          </button>
+          {activeView !== "trash" && (
+            <button className="primary-button desktop-create" type="button" onClick={openCreateForm}>
+              <span aria-hidden="true">＋</span> 新しいToDo
+            </button>
+          )}
         </header>
 
         <section className="scope-toolbar" aria-label="ToDoのタブ切替">
@@ -895,13 +1554,13 @@ export function TodoApp() {
           >
             <span aria-hidden="true">☷</span>
             <strong>すべてのToDo</strong>
-            <small>{tasks.length}件</small>
+            <small>{activeTaskCount}件</small>
           </button>
           <nav className="custom-tab-list" aria-label="カスタムタブ">
             {tabs.length === 0 ? (
               <span className="tabs-empty-hint">タブを追加すると、仕事ごとに切り替えられます</span>
             ) : tabs.map((tab) => {
-              const tabCount = tasks.filter((task) => task.tabId === tab.id).length;
+              const tabCount = tasks.filter((task) => task.tabId === tab.id && !isDeleted(task)).length;
               return (
                 <button
                   type="button"
@@ -916,9 +1575,14 @@ export function TodoApp() {
               );
             })}
           </nav>
-          <button type="button" className="manage-tabs-button" onClick={openTabManager}>
-            <span aria-hidden="true">＋</span> タブ管理
-          </button>
+          <div className="scope-tools">
+            <button type="button" className="manage-tabs-button" onClick={openTabManager}>
+              <span aria-hidden="true">＋</span> タブ管理
+            </button>
+            <button type="button" className="data-tools-button" onClick={() => setIsDataManagerOpen(true)}>
+              <span aria-hidden="true">⇅</span> データ管理
+            </button>
+          </div>
         </section>
 
         <section className="stats-grid" aria-label="ToDoの集計">
@@ -964,7 +1628,10 @@ export function TodoApp() {
               <p>{visibleTasks.length}件を表示</p>
             </div>
             <div className="toolbar-actions">
-              <div className="display-switch" role="group" aria-label="表示方法">
+              {activeView === "trash" ? (
+                <span className="trash-mode-note">ゴミ箱は一覧表示です</span>
+              ) : (
+                <div className="display-switch" role="group" aria-label="表示方法">
                 <button
                   type="button"
                   className={displayMode === "list" ? "active" : ""}
@@ -986,7 +1653,8 @@ export function TodoApp() {
                 >
                   <span aria-hidden="true">▬</span> ガント
                 </button>
-              </div>
+                </div>
+              )}
               <label className="search-box">
                 <span aria-hidden="true">⌕</span>
                 <span className="sr-only">ToDoを検索</span>
@@ -1005,7 +1673,7 @@ export function TodoApp() {
               端末内の保存領域を利用できません。ブラウザのプライベートモードや保存設定をご確認ください。
             </div>
           )}
-          {!isLoading && visibleTasks.length > 0 && displayMode === "kanban" && (
+          {!isLoading && visibleTasks.length > 0 && effectiveDisplayMode === "kanban" && (
             <div className="kanban-wrap">
               <p className="view-hint">カードは期限順です。PCでは列へドラッグ、スマホではカード内の状態から移動できます。</p>
               <div className="kanban-board" aria-label="かんばんボード">
@@ -1057,9 +1725,23 @@ export function TodoApp() {
                               {task.description && <p>{task.description}</p>}
                               <div className="kanban-card-meta">
                                 <span className={`due-label ${deadline.tone}`}>◷ {deadline.label}</span>
+                                {task.reminderAt && <span>♢ 通知 {formatDateTime(task.reminderAt)}</span>}
+                                {task.recurrence !== "none" && <span>↻ {recurrenceLabels[task.recurrence]}</span>}
                                 {task.assignee && <span>担当 {task.assignee}</span>}
                                 {task.attachments.length > 0 && <span>添付 {task.attachments.length}件</span>}
                               </div>
+                              {task.attachments.find((attachment) => attachment.type.startsWith("image/")) && (() => {
+                                const image = task.attachments.find((attachment) => attachment.type.startsWith("image/"))!;
+                                return (
+                                  <button
+                                    type="button"
+                                    className="kanban-image-preview"
+                                    onClick={(event) => openImagePreview(image, task.title, event.currentTarget)}
+                                  >
+                                    ▧ {image.name}を表示
+                                  </button>
+                                );
+                              })()}
                               <span className="paste-hint">
                                 {pastingTaskId === task.id ? "画像を添付中…" : `貼り付け先：${task.title}（Ctrl＋V）`}
                               </span>
@@ -1091,7 +1773,7 @@ export function TodoApp() {
               </div>
             </div>
           )}
-          {!isLoading && visibleTasks.length > 0 && displayMode === "gantt" && (
+          {!isLoading && visibleTasks.length > 0 && effectiveDisplayMode === "gantt" && (
             <div className="gantt-view">
               <div className="gantt-toolbar">
                 <div>
@@ -1133,6 +1815,7 @@ export function TodoApp() {
                         <button className="gantt-task-cell" type="button" onClick={() => openEditForm(task)}>
                           <span><i className={`status-${task.status}`} />{task.title}</span>
                           <small>{task.dueAt ? `期限 ${formatDateTime(task.dueAt)}` : "期限未設定"}</small>
+                          {task.reminderAt && <small className="gantt-reminder">♢ 通知 {formatDateTime(task.reminderAt)}</small>}
                         </button>
                         <div className="gantt-calendar">
                           {timelineDays.map((day, index) => (
@@ -1183,7 +1866,9 @@ export function TodoApp() {
               <div className="empty-symbol" aria-hidden="true">✓</div>
               <h3>{emptyTitle}</h3>
               <p>
-                {activeView === "all" && !search
+                {activeView === "trash"
+                  ? "削除したToDoはここに残ります。自動では完全削除されません。"
+                  : activeView === "all" && !search
                   ? "まずは、気になっている仕事をひとつ登録してみましょう。"
                   : "表示条件を変えると、別のToDoを確認できます。"}
               </p>
@@ -1193,25 +1878,29 @@ export function TodoApp() {
                 </button>
               )}
             </div>
-          ) : displayMode === "list" ? (
+          ) : effectiveDisplayMode === "list" ? (
             <div className="task-list">
               {visibleTasks.map((task) => {
                 const deadline = dueLabel(task);
                 return (
                   <article
-                    className={`${isComplete(task) ? "task-card completed" : "task-card"}${pastingTaskId === task.id ? " pasting" : ""}`}
+                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${pastingTaskId === task.id ? " pasting" : ""}`}
                     key={task.id}
                     tabIndex={0}
-                    onPaste={(event) => void handleCardPaste(event, task)}
+                    onPaste={activeView !== "trash" ? (event) => void handleCardPaste(event, task) : undefined}
                   >
-                    <button
-                      type="button"
-                      className="complete-button"
-                      onClick={() => void toggleComplete(task)}
-                      aria-label={isComplete(task) ? `${task.title}を未着手に戻す` : `${task.title}を完了にする`}
-                    >
-                      <span aria-hidden="true">✓</span>
-                    </button>
+                    {activeView === "trash" ? (
+                      <span className="trash-card-icon" aria-hidden="true">♲</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="complete-button"
+                        onClick={() => void toggleComplete(task)}
+                        aria-label={isComplete(task) ? `${task.title}を未着手に戻す` : `${task.title}を完了にする`}
+                      >
+                        <span aria-hidden="true">✓</span>
+                      </button>
+                    )}
 
                     <div className="task-body">
                       <div className="task-title-row">
@@ -1237,6 +1926,13 @@ export function TodoApp() {
                         </span>
                         {task.requester && <span><b>依頼元</b>{task.requester}</span>}
                         {task.assignee && <span><b>依頼先</b>{task.assignee}</span>}
+                        {task.reminderAt && (
+                          <span className={task.reminderSentAt ? "reminder-label sent" : "reminder-label"}>
+                            <b>通知</b>{formatDateTime(task.reminderAt)}{task.reminderSentAt ? "（通知済み）" : ""}
+                          </span>
+                        )}
+                        {task.recurrence !== "none" && <span className="recurrence-label">↻ {recurrenceLabels[task.recurrence]}</span>}
+                        {activeView === "trash" && <span className="deleted-label">削除 {formatCreatedAt(task.deletedAt)}</span>}
                         <span className="created-label">登録 {formatCreatedAt(task.createdAt)}</span>
                       </div>
 
@@ -1246,28 +1942,36 @@ export function TodoApp() {
                             <button
                               type="button"
                               key={attachment.id}
-                              onClick={() => downloadAttachment(attachment)}
-                              title={`${attachment.name}を保存`}
+                              className={attachment.type.startsWith("image/") ? "image-attachment" : ""}
+                              onClick={(event) => openImagePreview(attachment, task.title, event.currentTarget)}
+                              title={attachment.type.startsWith("image/") ? `${attachment.name}をプレビュー` : `${attachment.name}を保存`}
                             >
-                              <span aria-hidden="true">⌕</span>
+                              <span aria-hidden="true">{attachment.type.startsWith("image/") ? "▧" : "⌕"}</span>
                               <span>{attachment.name}</span>
                               <small>{formatBytes(attachment.size)}</small>
                             </button>
                           ))}
                         </div>
                       )}
-                      <span className="paste-hint">
-                        {pastingTaskId === task.id ? "画像を添付中…" : `貼り付け先：${task.title}（Ctrl＋V）`}
-                      </span>
+                      {activeView !== "trash" && (
+                        <span className="paste-hint">
+                          {pastingTaskId === task.id ? "画像を添付中…" : `貼り付け先：${task.title}（Ctrl＋V）`}
+                        </span>
+                      )}
                     </div>
 
                     <div className="task-actions">
-                      <button type="button" onClick={() => openEditForm(task)} aria-label={`${task.title}を編集`}>
-                        編集
-                      </button>
-                      <button type="button" className="delete-action" onClick={() => void deleteTask(task)} aria-label={`${task.title}を削除`}>
-                        削除
-                      </button>
+                      {activeView === "trash" ? (
+                        <>
+                          <button type="button" className="restore-action" onClick={() => void restoreTask(task)}>元に戻す</button>
+                          <button type="button" className="delete-action" onClick={() => void permanentlyDeleteTask(task)}>完全に削除</button>
+                        </>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => openEditForm(task)} aria-label={`${task.title}を編集`}>編集</button>
+                          <button type="button" className="delete-action" onClick={() => void deleteTask(task)} aria-label={`${task.title}を削除`}>削除</button>
+                        </>
+                      )}
                     </div>
                   </article>
                 );
@@ -1277,9 +1981,11 @@ export function TodoApp() {
         </section>
       </main>
 
-      <button className="mobile-create-button" type="button" onClick={openCreateForm} aria-label="新しいToDoを登録">
-        <span aria-hidden="true">＋</span>
-      </button>
+      {activeView !== "trash" && (
+        <button className="mobile-create-button" type="button" onClick={openCreateForm} aria-label="新しいToDoを登録">
+          <span aria-hidden="true">＋</span>
+        </button>
+      )}
 
       {isFormOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
@@ -1296,6 +2002,24 @@ export function TodoApp() {
 
             <form onSubmit={handleSubmit}>
               <div className="form-scroll">
+                {!editingId && templates.length > 0 && (
+                  <label className="template-picker">
+                    <span>テンプレートから作成</span>
+                    <select
+                      value=""
+                      onChange={(event) => {
+                        const template = templates.find((item) => item.id === event.target.value);
+                        if (template) applyTemplate(template);
+                      }}
+                    >
+                      <option value="">テンプレートを選択</option>
+                      {templates.map((template) => (
+                        <option value={template.id} key={template.id}>{template.name}</option>
+                      ))}
+                    </select>
+                    <small>適用後に内容を確認・修正してから登録できます。</small>
+                  </label>
+                )}
                 <label className="form-field form-field-full">
                   <span>タイトル <b>必須</b></span>
                   <input
@@ -1337,6 +2061,26 @@ export function TodoApp() {
                       value={form.dueAt}
                       onChange={(event) => setForm((current) => ({ ...current, dueAt: event.target.value }))}
                     />
+                  </label>
+                  <label className="form-field">
+                    <span>リマインダー</span>
+                    <input
+                      type="datetime-local"
+                      value={form.reminderAt}
+                      onChange={(event) => setForm((current) => ({ ...current, reminderAt: event.target.value }))}
+                    />
+                    <small className="field-help">画面を開いている間に通知します</small>
+                  </label>
+                  <label className="form-field">
+                    <span>繰り返し</span>
+                    <select
+                      value={form.recurrence}
+                      onChange={(event) => setForm((current) => ({ ...current, recurrence: event.target.value as Recurrence }))}
+                    >
+                      {(Object.keys(recurrenceLabels) as Recurrence[]).map((recurrence) => (
+                        <option value={recurrence} key={recurrence}>{recurrenceLabels[recurrence]}</option>
+                      ))}
+                    </select>
                   </label>
                   <label className="form-field">
                     <span>状態</span>
@@ -1397,6 +2141,10 @@ export function TodoApp() {
                   )}
                 </label>
 
+                <button type="button" className="template-save-button" onClick={() => void saveCurrentAsTemplate()}>
+                  ☆ 現在の内容をテンプレートとして保存
+                </button>
+
                 <div className="form-field form-field-full">
                   <span>ファイル添付</span>
                   <label className="file-drop">
@@ -1416,6 +2164,15 @@ export function TodoApp() {
                       {form.attachments.map((attachment) => (
                         <div key={attachment.id}>
                           <span><b>{attachment.name}</b><small>{formatBytes(attachment.size)}</small></span>
+                          {attachment.type.startsWith("image/") && (
+                            <button
+                              type="button"
+                              className="preview-file-button"
+                              onClick={(event) => openImagePreview(attachment, form.title || "編集中のToDo", event.currentTarget)}
+                            >
+                              表示
+                            </button>
+                          )}
                           <button
                             type="button"
                             aria-label={`${attachment.name}を外す`}
@@ -1512,7 +2269,7 @@ export function TodoApp() {
                     <span>上の入力欄から最初のタブを追加できます。</span>
                   </div>
                 ) : tabs.map((tab) => {
-                  const tabCount = tasks.filter((task) => task.tabId === tab.id).length;
+                  const tabCount = tasks.filter((task) => task.tabId === tab.id && !isDeleted(task)).length;
                   return (
                     <div className="tab-manager-item" key={tab.id}>
                       <span className="tab-manager-icon" aria-hidden="true">▣</span>
@@ -1533,7 +2290,151 @@ export function TodoApp() {
         </div>
       )}
 
-      {notice && <div className="toast" role="status">{notice}</div>}
+      {isDataManagerOpen && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !isProcessingData) setIsDataManagerOpen(false);
+        }}>
+          <section className="data-modal" role="dialog" aria-modal="true" aria-labelledby="data-manager-title">
+            <header className="modal-header">
+              <div>
+                <p>BACKUP & SETTINGS</p>
+                <h2 id="data-manager-title">データ管理</h2>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setIsDataManagerOpen(false)}
+                aria-label="閉じる"
+                disabled={isProcessingData}
+              >
+                ×
+              </button>
+            </header>
+            <div className="data-manager-content">
+              <p className="data-manager-lead">
+                現在はこの端末だけに保存しています。バックアップにはToDo・タブ・ゴミ箱・添付・テンプレートがすべて含まれます。
+              </p>
+
+              <div className="storage-summary" aria-label="保存状況">
+                <span><strong>{activeTaskCount}</strong><small>使用中ToDo</small></span>
+                <span><strong>{trashTaskCount}</strong><small>ゴミ箱</small></span>
+                <span><strong>{totalAttachmentCount}</strong><small>添付</small></span>
+                <span><strong>{formatBytes(totalAttachmentSize)}</strong><small>添付容量</small></span>
+              </div>
+
+              <section className="data-panel">
+                <div>
+                  <strong>① バックアップを保存</strong>
+                  <p>別の場所へ保管できるJSONファイルを作成します。添付画像も含まれます。</p>
+                </div>
+                <button type="button" className="primary-button" onClick={() => void exportBackup()} disabled={isProcessingData}>
+                  {isProcessingData ? "処理中…" : "バックアップを保存"}
+                </button>
+              </section>
+
+              <section className="data-panel restore-panel">
+                <div>
+                  <strong>② バックアップを復元</strong>
+                  <p>復元前に内容を検証します。成功した場合のみ、現在のデータを置き換えます。</p>
+                </div>
+                <input
+                  ref={restoreInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void restoreBackup(file);
+                  }}
+                  disabled={isProcessingData}
+                />
+                <button type="button" className="secondary-button" onClick={() => restoreInputRef.current?.click()} disabled={isProcessingData}>
+                  バックアップを選択
+                </button>
+              </section>
+
+              <section className="data-panel notification-panel">
+                <div>
+                  <strong>リマインダー通知</strong>
+                  <p>この画面を開いている間に確認し、許可済みならブラウザ通知も表示します。</p>
+                </div>
+                <span className={`permission-status permission-${notificationPermission}`}>
+                  {notificationPermission === "granted"
+                    ? "通知：許可済み"
+                    : notificationPermission === "denied"
+                      ? "通知：ブロック中"
+                      : notificationPermission === "unsupported"
+                        ? "通知：未対応"
+                        : "通知：未設定"}
+                </span>
+                {notificationPermission === "default" && (
+                  <button type="button" className="secondary-button" onClick={() => void requestReminderPermission()}>
+                    通知を許可する
+                  </button>
+                )}
+              </section>
+
+              <section className="template-manager-panel">
+                <header>
+                  <div>
+                    <strong>定型テンプレート</strong>
+                    <p>ToDo入力画面の「テンプレートとして保存」から追加できます。</p>
+                  </div>
+                  <span>{templates.length}件</span>
+                </header>
+                {templates.length === 0 ? (
+                  <div className="template-manager-empty">保存済みテンプレートはありません。</div>
+                ) : (
+                  <div className="template-manager-list">
+                    {templates.map((template) => (
+                      <div key={template.id}>
+                        <span><strong>{template.name}</strong><small>{template.title}</small></span>
+                        <button type="button" onClick={() => createFromTemplate(template)}>この内容で作成</button>
+                        <button type="button" className="delete-action" onClick={() => void deleteTemplate(template)}>削除</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {previewTarget && (
+        <div className="modal-backdrop preview-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) closeImagePreview();
+        }}>
+          <section className="image-preview-modal" role="dialog" aria-modal="true" aria-labelledby="image-preview-title">
+            <header className="modal-header">
+              <div>
+                <p>{previewTarget.taskTitle}</p>
+                <h2 id="image-preview-title">{previewTarget.attachment.name}</h2>
+              </div>
+              <button type="button" className="modal-close" onClick={closeImagePreview} aria-label="閉じる">×</button>
+            </header>
+            <div className="image-preview-stage">
+              {previewUrl && !previewLoadError && (
+                <img src={previewUrl} alt={previewTarget.attachment.name} onError={() => setPreviewLoadError(true)} />
+              )}
+              {previewLoadError && <p>画像を表示できません。下の「画像を保存」から確認できます。</p>}
+            </div>
+            <footer className="image-preview-footer">
+              <span>{formatBytes(previewTarget.attachment.size)}</span>
+              <button type="button" className="secondary-button" onClick={() => downloadAttachment(previewTarget.attachment)}>画像を保存</button>
+              <button type="button" className="primary-button" onClick={closeImagePreview}>閉じる</button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      {notice && (
+        <div className="toast" role="status">
+          <span>{notice}</span>
+          {undoDelete?.message === notice && (
+            <button type="button" onClick={() => void undoLastDelete()}>元に戻す</button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

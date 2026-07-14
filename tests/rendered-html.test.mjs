@@ -32,6 +32,8 @@ test("個人向けToDo画面をサーバーレンダリングする", async () =
   assert.match(html, /<html[^>]*lang="ja"/i);
   assert.match(html, /すべてのToDo/);
   assert.match(html, /タブ管理/);
+  assert.match(html, /データ管理/);
+  assert.match(html, /ゴミ箱/);
   assert.match(html, /<title>ととのうToDo｜個人タスク管理<\/title>/);
   assert.match(html, /今日のToDo/);
   assert.match(html, /新しいToDo/);
@@ -62,10 +64,18 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /event\.clipboardData\.items/);
   assert.match(app, /filesToAttachments\(imageFiles, true\)/);
   assert.match(app, /貼り付け先：/);
+  assert.match(app, /function restoreBackup/);
+  assert.match(app, /blobToDataUrl/);
+  assert.match(app, /deletedAt/);
+  assert.match(app, /function undoLastDelete/);
+  assert.match(app, /Notification\.requestPermission/);
+  assert.match(app, /buildNextRecurringTask/);
+  assert.match(app, /saveCurrentAsTemplate/);
   assert.match(app, /startAt: task\.startAt \?\? ""/);
   assert.match(app, /tabId: task\.tabId \?\? ""/);
-  assert.match(app, /const DB_VERSION = 2/);
+  assert.match(app, /const DB_VERSION = 3/);
   assert.match(app, /const TAB_STORE_NAME = "tabs"/);
+  assert.match(app, /const TEMPLATE_STORE_NAME = "templates"/);
   assert.match(app, /removeTabAndUnassign/);
   assert.match(app, /function showAllTasks/);
   assert.match(app, /期限は開始日時以降に設定してください/);
@@ -79,6 +89,9 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.tab-modal/);
   assert.match(css, /\.paste-hint/);
   assert.match(css, /\.task-card:focus-within/);
+  assert.match(css, /\.data-modal/);
+  assert.match(css, /\.image-preview-modal/);
+  assert.match(css, /\.template-picker/);
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion/);
