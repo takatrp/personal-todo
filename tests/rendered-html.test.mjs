@@ -78,6 +78,11 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /Notification\.requestPermission/);
   assert.match(app, /buildNextRecurringTask/);
   assert.match(app, /saveCurrentAsTemplate/);
+  assert.match(app, /sortOrder/);
+  assert.match(app, /function reorderTabs/);
+  assert.match(app, /function handleTaskCardDrop/);
+  assert.match(app, /onDoubleClick/);
+  assert.match(app, /nativeEvent\.isComposing/);
   assert.match(app, /startAt: task\.startAt \?\? ""/);
   assert.match(app, /tabId: task\.tabId \?\? ""/);
   assert.match(app, /const DB_VERSION = 3/);
@@ -99,6 +104,9 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.data-modal/);
   assert.match(css, /\.image-preview-modal/);
   assert.match(css, /\.template-picker/);
+  assert.match(css, /\.inline-title-input/);
+  assert.match(css, /\.task-drag-handle/);
+  assert.match(css, /\.tab-drag-handle/);
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion/);

@@ -29,6 +29,7 @@ type Attachment = {
 type Task = {
   id: string;
   title: string;
+  sortOrder: number;
   description: string;
   status: TaskStatus;
   startAt: string;
@@ -72,6 +73,7 @@ type TaskForm = {
 type TodoTab = {
   id: string;
   name: string;
+  sortOrder: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -184,6 +186,7 @@ function openDatabase(): Promise<IDBDatabase> {
 function normalizeTask(task: Task): Task {
   return {
     ...task,
+    sortOrder: Number.isFinite(task.sortOrder) ? task.sortOrder : 0,
     description: task.description ?? "",
     status: statusLabels[task.status] ? task.status : "open",
     startAt: task.startAt ?? "",
@@ -201,6 +204,13 @@ function normalizeTask(task: Task): Task {
     assignee: task.assignee ?? "",
     attachments: task.attachments ?? [],
     completedAt: task.completedAt ?? "",
+  };
+}
+
+function normalizeTab(tab: TodoTab): TodoTab {
+  return {
+    ...tab,
+    sortOrder: Number.isFinite(tab.sortOrder) ? tab.sortOrder : 0,
   };
 }
 
@@ -267,9 +277,7 @@ async function readTabs(): Promise<TodoTab[]> {
       .transaction(TAB_STORE_NAME, "readonly")
       .objectStore(TAB_STORE_NAME)
       .getAll();
-    request.onsuccess = () => resolve((request.result as TodoTab[]).sort((first, second) =>
-      first.createdAt.localeCompare(second.createdAt),
-    ));
+    request.onsuccess = () => resolve(sortTabs((request.result as TodoTab[]).map(normalizeTab)));
     request.onerror = () => reject(request.error);
     request.transaction.oncomplete = () => database.close();
   });
@@ -280,6 +288,20 @@ async function writeTab(tab: TodoTab) {
   return new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(TAB_STORE_NAME, "readwrite");
     transaction.objectStore(TAB_STORE_NAME).put(tab);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => reject(transaction.error);
+  });
+}
+
+async function writeTabs(tabs: TodoTab[]) {
+  const database = await openDatabase();
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(TAB_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(TAB_STORE_NAME);
+    tabs.forEach((tab) => store.put(tab));
     transaction.oncomplete = () => {
       database.close();
       resolve();
@@ -635,6 +657,7 @@ function filesToAttachments(files: File[], renameAsScreenshot = false) {
 
 function sortTasks(tasks: Task[]) {
   return [...tasks].sort((first, second) => {
+    if (first.sortOrder !== second.sortOrder) return first.sortOrder - second.sortOrder;
     if (isComplete(first) !== isComplete(second)) return isComplete(first) ? 1 : -1;
     if (!first.dueAt && !second.dueAt) return second.createdAt.localeCompare(first.createdAt);
     if (!first.dueAt) return 1;
@@ -644,11 +667,26 @@ function sortTasks(tasks: Task[]) {
 }
 
 function sortTabs(tabs: TodoTab[]) {
-  return [...tabs].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+  return [...tabs].sort((first, second) =>
+    first.sortOrder - second.sortOrder || first.createdAt.localeCompare(second.createdAt),
+  );
 }
 
 function sortTemplates(templates: TodoTemplate[]) {
   return [...templates].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+}
+
+function nextTaskSortOrder(tasks: Task[]) {
+  const activeTasks = tasks.filter((task) => !isDeleted(task));
+  return activeTasks.length > 0
+    ? Math.min(...activeTasks.map((task) => task.sortOrder)) - 1000
+    : 0;
+}
+
+function nextTabSortOrder(tabs: TodoTab[]) {
+  return tabs.length > 0
+    ? Math.max(...tabs.map((tab) => tab.sortOrder)) + 1000
+    : 0;
 }
 
 export function TodoApp() {
@@ -660,6 +698,7 @@ export function TodoApp() {
   const [displayMode, setDisplayMode] = useState<DisplayMode>("list");
   const [timelineStart, setTimelineStart] = useState("");
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const [pastingTaskId, setPastingTaskId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -672,6 +711,8 @@ export function TodoApp() {
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [tabDraft, setTabDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
   const [form, setForm] = useState<TaskForm>(initialForm);
   const [todayText, setTodayText] = useState("予定をひと目で整理");
   const [notice, setNotice] = useState("");
@@ -686,6 +727,8 @@ export function TodoApp() {
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const previewReturnFocusRef = useRef<HTMLElement | null>(null);
   const reminderCheckRef = useRef(false);
+  const canceledTitleEditRef = useRef<string | null>(null);
+  const savingTitleIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const savedDisplayMode = window.localStorage.getItem("totonou-display-mode");
@@ -911,6 +954,147 @@ export function TodoApp() {
     setSearch("");
   }
 
+  function beginInlineTitleEdit(task: Task) {
+    if (isDeleted(task)) return;
+    canceledTitleEditRef.current = null;
+    setEditingTitleId(task.id);
+    setTitleDraft(task.title);
+  }
+
+  async function saveInlineTitle(task: Task) {
+    if (canceledTitleEditRef.current === task.id) {
+      canceledTitleEditRef.current = null;
+      return;
+    }
+    if (savingTitleIdRef.current === task.id) return;
+    const title = titleDraft.trim();
+    if (!title) {
+      setEditingTitleId(null);
+      setTitleDraft(task.title);
+      setNotice("タイトルは空欄にできません");
+      return;
+    }
+    if (title === task.title) {
+      setEditingTitleId(null);
+      return;
+    }
+
+    const currentTask = tasks.find((item) => item.id === task.id) ?? task;
+    const updatedTask = { ...currentTask, title, updatedAt: new Date().toISOString() };
+    savingTitleIdRef.current = task.id;
+    setEditingTitleId(null);
+    setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? updatedTask : item)));
+    try {
+      await writeTask(updatedTask);
+      setNotice("タイトルを更新しました");
+    } catch {
+      setTasks((current) => sortTasks(current.map((item) =>
+        item.id === task.id ? { ...item, title: currentTask.title } : item,
+      )));
+      setStorageError(true);
+      setNotice("タイトルを保存できませんでした");
+    } finally {
+      savingTitleIdRef.current = null;
+    }
+  }
+
+  function handleInlineTitleKeyDown(event: KeyboardEvent<HTMLInputElement>, task: Task) {
+    if (event.key === "Enter") {
+      if (event.nativeEvent.isComposing) return;
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      canceledTitleEditRef.current = task.id;
+      setTitleDraft(task.title);
+      setEditingTitleId(null);
+    }
+  }
+
+  function renderInlineTitle(task: Task, className: string) {
+    if (editingTitleId === task.id) {
+      return (
+        <input
+          className="inline-title-input"
+          type="text"
+          value={titleDraft}
+          maxLength={120}
+          autoFocus
+          aria-label={`${task.title}のタイトルを編集`}
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => setTitleDraft(event.target.value)}
+          onKeyDown={(event) => handleInlineTitleKeyDown(event, task)}
+          onBlur={() => void saveInlineTitle(task)}
+          onDoubleClick={(event) => event.stopPropagation()}
+        />
+      );
+    }
+    return (
+      <button
+        type="button"
+        className={className}
+        draggable={false}
+        title="ダブルクリックでタイトルを編集"
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          beginInlineTitleEdit(task);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === "F2") {
+            event.preventDefault();
+            beginInlineTitleEdit(task);
+          }
+        }}
+      >
+        {task.title}
+      </button>
+    );
+  }
+
+  async function reorderTabs(sourceId: string, targetId: string, placeAfter: boolean) {
+    if (sourceId === targetId) return;
+    const previousTabs = tabs;
+    const ordered = sortTabs(tabs);
+    const source = ordered.find((tab) => tab.id === sourceId);
+    if (!source) return;
+    const withoutSource = ordered.filter((tab) => tab.id !== sourceId);
+    const targetIndex = withoutSource.findIndex((tab) => tab.id === targetId);
+    if (targetIndex < 0) return;
+    withoutSource.splice(targetIndex + (placeAfter ? 1 : 0), 0, source);
+    const reordered = withoutSource.map((tab, index) => ({ ...tab, sortOrder: index * 1000 }));
+    const previousById = new Map(previousTabs.map((tab) => [tab.id, tab]));
+    const changedTabs = reordered.filter((tab) => previousById.get(tab.id)?.sortOrder !== tab.sortOrder);
+    setTabs(reordered);
+    try {
+      await writeTabs(changedTabs);
+      setNotice("タブの並び順を保存しました");
+    } catch {
+      setTabs(previousTabs);
+      setStorageError(true);
+      setNotice("タブの並び順を保存できませんでした");
+    }
+  }
+
+  function handleTabDrop(event: DragEvent<HTMLElement>, targetId: string) {
+    event.preventDefault();
+    const sourceId = draggingTabId || event.dataTransfer.getData("application/x-todo-tab");
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const placeAfter = event.clientX > bounds.left + bounds.width / 2;
+    setDraggingTabId(null);
+    if (sourceId) void reorderTabs(sourceId, targetId, placeAfter);
+  }
+
+  function handleTabHandleKeyDown(event: KeyboardEvent<HTMLButtonElement>, tab: TodoTab) {
+    if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+    event.preventDefault();
+    const ordered = sortTabs(tabs);
+    const index = ordered.findIndex((item) => item.id === tab.id);
+    const targetIndex = event.key === "ArrowLeft" ? index - 1 : index + 1;
+    const target = ordered[targetIndex];
+    if (target) void reorderTabs(tab.id, target.id, event.key === "ArrowRight");
+  }
+
   function openTabManager() {
     setEditingTabId(null);
     setTabDraft("");
@@ -945,6 +1129,7 @@ export function TodoApp() {
     const tab: TodoTab = {
       id: previousTab?.id ?? createId(),
       name,
+      sortOrder: previousTab?.sortOrder ?? nextTabSortOrder(tabs),
       createdAt: previousTab?.createdAt ?? now,
       updatedAt: now,
     };
@@ -1064,6 +1249,7 @@ export function TodoApp() {
     let task: Task = {
       id: taskId,
       title,
+      sortOrder: previousTask?.sortOrder ?? nextTaskSortOrder(tasks),
       description: form.description.trim(),
       status: nextStatus,
       startAt,
@@ -1091,7 +1277,9 @@ export function TodoApp() {
       previousTask?.status !== "done" &&
       task.recurrence !== "none" &&
       !task.recurrenceGeneratedAt;
-    const nextRecurringTask = shouldGenerateNext ? buildNextRecurringTask(task, now) : null;
+    const nextRecurringTask = shouldGenerateNext
+      ? { ...buildNextRecurringTask(task, now), sortOrder: nextTaskSortOrder(tasks) }
+      : null;
     if (nextRecurringTask) task = { ...task, recurrenceGeneratedAt: now };
 
     try {
@@ -1116,8 +1304,15 @@ export function TodoApp() {
     }
   }
 
-  async function moveTaskStatus(task: Task, nextStatus: TaskStatus) {
-    if (task.status === nextStatus) return;
+  async function moveTaskStatus(
+    task: Task,
+    nextStatus: TaskStatus,
+    targetTaskId?: string,
+    placeAfter = false,
+    placeAtEnd = false,
+  ) {
+    if (task.status === nextStatus && (!targetTaskId || targetTaskId === task.id) && !placeAtEnd) return;
+    const previousTasks = tasks;
     const now = new Date().toISOString();
     let nextTask: Task = {
       ...task,
@@ -1132,26 +1327,74 @@ export function TodoApp() {
         ? buildNextRecurringTask(nextTask, now)
         : null;
     if (nextRecurringTask) nextTask = { ...nextTask, recurrenceGeneratedAt: now };
-    setTasks((current) =>
-      sortTasks([
-        ...current.filter((item) => item.id !== task.id && item.id !== nextRecurringTask?.id),
-        nextTask,
-        ...(nextRecurringTask ? [nextRecurringTask] : []),
-      ]),
-    );
-    try {
-      if (nextRecurringTask) await writeTasks([nextTask, nextRecurringTask]);
-      else await writeTask(nextTask);
-      setNotice(nextRecurringTask
-        ? `「${statusLabels[nextStatus]}」へ移動し、次回分を作成しました`
-        : `「${statusLabels[nextStatus]}」へ移動しました`);
-    } catch {
-      setTasks((current) =>
-        sortTasks([
-          ...current.filter((item) => item.id !== task.id && item.id !== nextRecurringTask?.id),
-          task,
-        ]),
+
+    const orderedActiveTasks = sortTasks(previousTasks.filter((item) =>
+      !isDeleted(item) && item.id !== task.id && item.id !== nextRecurringTask?.id,
+    ));
+    let insertIndex = orderedActiveTasks.length;
+    if (targetTaskId) {
+      const targetIndex = orderedActiveTasks.findIndex((item) => item.id === targetTaskId);
+      if (targetIndex >= 0) insertIndex = targetIndex + (placeAfter ? 1 : 0);
+    } else {
+      const lastStatusIndex = orderedActiveTasks.reduce(
+        (lastIndex, item, index) => item.status === nextStatus ? index : lastIndex,
+        -1,
       );
+      if (lastStatusIndex >= 0) insertIndex = lastStatusIndex + 1;
+    }
+    orderedActiveTasks.splice(insertIndex, 0, nextTask);
+    if (nextRecurringTask) {
+      orderedActiveTasks.unshift({
+        ...nextRecurringTask,
+        sortOrder: nextTaskSortOrder(previousTasks),
+      });
+    }
+
+    const movedIndex = orderedActiveTasks.findIndex((item) => item.id === task.id);
+    const previousNeighbor = movedIndex > 0 ? orderedActiveTasks[movedIndex - 1] : undefined;
+    const nextNeighbor = movedIndex < orderedActiveTasks.length - 1
+      ? orderedActiveTasks[movedIndex + 1]
+      : undefined;
+    const needsReindex = Boolean(
+      previousNeighbor && nextNeighbor && nextNeighbor.sortOrder - previousNeighbor.sortOrder <= 1,
+    );
+    const movedSortOrder = previousNeighbor && nextNeighbor
+      ? Math.trunc((previousNeighbor.sortOrder + nextNeighbor.sortOrder) / 2)
+      : previousNeighbor
+        ? previousNeighbor.sortOrder + 1000
+        : nextNeighbor
+          ? nextNeighbor.sortOrder - 1000
+          : 0;
+    const reorderedActiveTasks = needsReindex
+      ? orderedActiveTasks.map((item, index) => ({ ...item, sortOrder: index * 1000 }))
+      : orderedActiveTasks.map((item) => item.id === task.id
+        ? { ...item, sortOrder: movedSortOrder }
+        : item);
+    const previousById = new Map(previousTasks.map((item) => [item.id, item]));
+    const changedTasks = reorderedActiveTasks.filter((item) => {
+      const previous = previousById.get(item.id);
+      return !previous ||
+        previous.sortOrder !== item.sortOrder ||
+        previous.status !== item.status ||
+        previous.completedAt !== item.completedAt ||
+        previous.updatedAt !== item.updatedAt ||
+        previous.recurrenceGeneratedAt !== item.recurrenceGeneratedAt;
+    });
+    const nextTasks = sortTasks([
+      ...reorderedActiveTasks,
+      ...previousTasks.filter(isDeleted),
+    ]);
+    setTasks(nextTasks);
+    try {
+      await writeTasks(changedTasks);
+      setNotice(task.status === nextStatus
+        ? "ToDoの並び順を保存しました"
+        : nextRecurringTask
+          ? `「${statusLabels[nextStatus]}」へ移動し、次回分を作成しました`
+          : `「${statusLabels[nextStatus]}」へ移動しました`);
+    } catch {
+      setTasks(previousTasks);
+      setStorageError(true);
       setNotice("変更を保存できませんでした");
     }
   }
@@ -1160,11 +1403,61 @@ export function TodoApp() {
     await moveTaskStatus(task, task.status === "done" ? "open" : "done");
   }
 
+  function handleTaskDragStart(event: DragEvent<HTMLElement>, task: Task) {
+    if (editingTitleId === task.id) {
+      event.preventDefault();
+      return;
+    }
+    setDraggingTaskId(task.id);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-todo-task", task.id);
+    event.dataTransfer.setData("text/plain", task.id);
+  }
+
+  function handleTaskHandleKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    task: Task,
+    orderedTasks: Task[],
+  ) {
+    if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+    event.preventDefault();
+    const index = orderedTasks.findIndex((item) => item.id === task.id);
+    const targetIndex = event.key === "ArrowUp" ? index - 1 : index + 1;
+    const target = orderedTasks[targetIndex];
+    if (target) {
+      void moveTaskStatus(task, task.status, target.id, event.key === "ArrowDown");
+    }
+  }
+
+  function draggedTaskFromEvent(event: DragEvent<HTMLElement>) {
+    const sourceId = draggingTaskId ||
+      event.dataTransfer.getData("application/x-todo-task") ||
+      event.dataTransfer.getData("text/plain");
+    return tasks.find((item) => item.id === sourceId);
+  }
+
+  function handleTaskCardDrop(event: DragEvent<HTMLElement>, targetTask: Task, keepStatus: boolean) {
+    event.preventDefault();
+    event.stopPropagation();
+    const task = draggedTaskFromEvent(event);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const placeAfter = event.clientY > bounds.top + bounds.height / 2;
+    setDraggingTaskId(null);
+    if (task && task.id !== targetTask.id) {
+      void moveTaskStatus(
+        task,
+        keepStatus ? task.status : targetTask.status,
+        targetTask.id,
+        placeAfter,
+      );
+    }
+  }
+
   function handleKanbanDrop(event: DragEvent<HTMLDivElement>, status: TaskStatus) {
     event.preventDefault();
-    const task = tasks.find((item) => item.id === draggingTaskId);
+    const task = draggedTaskFromEvent(event);
     setDraggingTaskId(null);
-    if (task) void moveTaskStatus(task, status);
+    if (task) void moveTaskStatus(task, status, undefined, false, true);
   }
 
   function shiftTimeline(days: number) {
@@ -1443,7 +1736,7 @@ export function TodoApp() {
         throw new Error("ととのうToDoのバックアップファイルではありません");
       }
 
-      const restoredTabs = parsed.tabs as TodoTab[];
+      const restoredTabs = (parsed.tabs as TodoTab[]).map(normalizeTab);
       const restoredTemplates = parsed.templates as TodoTemplate[];
       const tabIds = new Set(restoredTabs.map((tab) => tab.id));
       if (tabIds.size !== restoredTabs.length || restoredTabs.some((tab) => !tab.id || !tab.name)) {
@@ -1614,16 +1907,41 @@ export function TodoApp() {
             ) : tabs.map((tab) => {
               const tabCount = tasks.filter((task) => task.tabId === tab.id && !isDeleted(task)).length;
               return (
-                <button
-                  type="button"
-                  className={activeTabId === tab.id ? "custom-tab active" : "custom-tab"}
+                <div
+                  className={`custom-tab-shell${draggingTabId === tab.id ? " dragging" : ""}`}
                   key={tab.id}
-                  onClick={() => setActiveTabId(tab.id)}
-                  aria-pressed={activeTabId === tab.id}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => handleTabDrop(event, tab.id)}
                 >
-                  <span>{tab.name}</span>
-                  <small>{tabCount}</small>
-                </button>
+                  <button
+                    type="button"
+                    className="tab-drag-handle"
+                    draggable
+                    aria-label={`${tab.name}をドラッグして並び替え`}
+                    title="ドラッグで並び替え（Alt＋左右キーにも対応）"
+                    onDragStart={(event) => {
+                      setDraggingTabId(tab.id);
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("application/x-todo-tab", tab.id);
+                    }}
+                    onDragEnd={() => setDraggingTabId(null)}
+                    onKeyDown={(event) => handleTabHandleKeyDown(event, tab)}
+                  >
+                    ⠿
+                  </button>
+                  <button
+                    type="button"
+                    className={activeTabId === tab.id ? "custom-tab active" : "custom-tab"}
+                    onClick={() => setActiveTabId(tab.id)}
+                    aria-pressed={activeTabId === tab.id}
+                  >
+                    <span>{tab.name}</span>
+                    <small>{tabCount}</small>
+                  </button>
+                </div>
               );
             })}
           </nav>
@@ -1727,7 +2045,7 @@ export function TodoApp() {
           )}
           {!isLoading && visibleTasks.length > 0 && effectiveDisplayMode === "kanban" && (
             <div className="kanban-wrap">
-              <p className="view-hint">カードは期限順です。PCでは列へドラッグ、スマホではカード内の状態から移動できます。</p>
+              <p className="view-hint">⠿をドラッグして並び替え・列移動。タイトルはダブルクリック、または✎から直接編集できます。</p>
               <div className="kanban-board" aria-label="かんばんボード">
                 {(Object.keys(statusLabels) as TaskStatus[]).map((status) => {
                   const columnTasks = visibleTasks.filter((task) => task.status === status);
@@ -1752,19 +2070,43 @@ export function TodoApp() {
                           return (
                             <article
                               className={`kanban-card${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}`}
-                              draggable
                               key={task.id}
                               tabIndex={0}
                               onPaste={(event) => void handleCardPaste(event, task)}
-                              onDragStart={(event) => {
-                                setDraggingTaskId(task.id);
-                                event.dataTransfer.effectAllowed = "move";
-                                event.dataTransfer.setData("text/plain", task.id);
+                              onDragOver={(event) => {
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
                               }}
-                              onDragEnd={() => setDraggingTaskId(null)}
+                              onDrop={(event) => handleTaskCardDrop(event, task, false)}
                             >
-                              <button className="kanban-card-title" type="button" onClick={() => openEditForm(task)}>
-                                {task.title}
+                              <div className="kanban-title-row">
+                                <button
+                                  type="button"
+                                  className="task-drag-handle"
+                                  draggable={editingTitleId !== task.id}
+                                  aria-label={`${task.title}をドラッグして並び替え`}
+                                  title="ドラッグで並び替え（Alt＋上下キーにも対応）"
+                                  onDragStart={(event) => handleTaskDragStart(event, task)}
+                                  onDragEnd={() => setDraggingTaskId(null)}
+                                  onKeyDown={(event) => handleTaskHandleKeyDown(event, task, columnTasks)}
+                                >
+                                  ⠿
+                                </button>
+                                {renderInlineTitle(task, "kanban-card-title")}
+                                {editingTitleId !== task.id && (
+                                  <button
+                                    type="button"
+                                    className="title-quick-edit"
+                                    onClick={() => beginInlineTitleEdit(task)}
+                                    aria-label={`${task.title}のタイトルを直接編集`}
+                                    title="タイトルを直接編集"
+                                  >
+                                    ✎
+                                  </button>
+                                )}
+                              </div>
+                              <button className="kanban-detail-edit" type="button" onClick={() => openEditForm(task)}>
+                                詳細を編集
                               </button>
                               {task.tags.length > 0 && (
                                 <div className="tag-row">
@@ -1931,15 +2273,26 @@ export function TodoApp() {
               )}
             </div>
           ) : effectiveDisplayMode === "list" ? (
-            <div className="task-list">
+            <>
+              {activeView !== "trash" && (
+                <p className="view-hint list-view-hint">
+                  ⠿をドラッグして並び替え。タイトルはダブルクリック、または✎から直接編集できます。
+                </p>
+              )}
+              <div className="task-list">
               {visibleTasks.map((task) => {
                 const deadline = dueLabel(task);
                 return (
                   <article
-                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${pastingTaskId === task.id ? " pasting" : ""}`}
+                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}`}
                     key={task.id}
                     tabIndex={0}
                     onPaste={activeView !== "trash" ? (event) => void handleCardPaste(event, task) : undefined}
+                    onDragOver={activeView !== "trash" ? (event) => {
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                    } : undefined}
+                    onDrop={activeView !== "trash" ? (event) => handleTaskCardDrop(event, task, true) : undefined}
                   >
                     {activeView === "trash" ? (
                       <span className="trash-card-icon" aria-hidden="true">♲</span>
@@ -1956,7 +2309,32 @@ export function TodoApp() {
 
                     <div className="task-body">
                       <div className="task-title-row">
-                        <h3>{task.title}</h3>
+                        {activeView !== "trash" && (
+                          <button
+                            type="button"
+                            className="task-drag-handle"
+                            draggable={editingTitleId !== task.id}
+                            aria-label={`${task.title}をドラッグして並び替え`}
+                            title="ドラッグで並び替え（Alt＋上下キーにも対応）"
+                            onDragStart={(event) => handleTaskDragStart(event, task)}
+                            onDragEnd={() => setDraggingTaskId(null)}
+                            onKeyDown={(event) => handleTaskHandleKeyDown(event, task, visibleTasks)}
+                          >
+                            ⠿
+                          </button>
+                        )}
+                        <h3>{activeView === "trash" ? task.title : renderInlineTitle(task, "task-title-button")}</h3>
+                        {activeView !== "trash" && editingTitleId !== task.id && (
+                          <button
+                            type="button"
+                            className="title-quick-edit"
+                            onClick={() => beginInlineTitleEdit(task)}
+                            aria-label={`${task.title}のタイトルを直接編集`}
+                            title="タイトルを直接編集"
+                          >
+                            ✎
+                          </button>
+                        )}
                         <span className={`status-badge status-${task.status}`}>{statusLabels[task.status]}</span>
                       </div>
                       {task.description && <p className="task-description">{task.description}</p>}
@@ -2028,7 +2406,8 @@ export function TodoApp() {
                   </article>
                 );
               })}
-            </div>
+              </div>
+            </>
           ) : null}
         </section>
       </main>
