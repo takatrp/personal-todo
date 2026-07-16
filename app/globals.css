@@ -404,6 +404,11 @@ select:focus-visible {
   transform: scale(0.98);
 }
 
+.custom-tab-shell.touch-drop-target {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 .tab-drag-handle,
 .task-drag-handle {
   display: inline-grid;
@@ -413,7 +418,8 @@ select:focus-visible {
   color: #8b8e9b;
   background: #fff;
   cursor: grab;
-  touch-action: manipulation;
+  touch-action: none;
+  user-select: none;
 }
 
 .tab-drag-handle {
@@ -728,6 +734,12 @@ select:focus-visible {
   opacity: 0.42;
   border-color: #c8c8f5;
   transform: scale(0.99);
+}
+
+.task-card.touch-drop-target,
+.kanban-card.touch-drop-target {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-soft);
 }
 
 .task-card:focus,
@@ -1172,6 +1184,11 @@ select:focus-visible {
 .kanban-card.dragging {
   opacity: 0.42;
   transform: rotate(1.5deg);
+}
+
+.kanban-column.touch-drop-target {
+  outline: 2px dashed var(--primary);
+  outline-offset: -3px;
 }
 
 .kanban-title-row {

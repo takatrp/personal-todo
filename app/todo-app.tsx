@@ -6,6 +6,7 @@ import {
   DragEvent,
   FormEvent,
   KeyboardEvent,
+  TouchEvent,
   useEffect,
   useMemo,
   useRef,
@@ -77,6 +78,17 @@ type TodoTab = {
   createdAt: string;
   updatedAt: string;
 };
+
+type TouchDropTarget =
+  | { kind: "tab"; targetId: string; placeAfter: boolean }
+  | {
+      kind: "task";
+      targetId: string;
+      targetStatus: TaskStatus;
+      keepStatus: boolean;
+      placeAfter: boolean;
+    }
+  | { kind: "kanban"; targetStatus: TaskStatus };
 
 type TodoTemplate = {
   id: string;
@@ -699,6 +711,7 @@ export function TodoApp() {
   const [timelineStart, setTimelineStart] = useState("");
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
+  const [touchDropTargetKey, setTouchDropTargetKey] = useState("");
   const [pastingTaskId, setPastingTaskId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -729,6 +742,7 @@ export function TodoApp() {
   const reminderCheckRef = useRef(false);
   const canceledTitleEditRef = useRef<string | null>(null);
   const savingTitleIdRef = useRef<string | null>(null);
+  const touchDropTargetRef = useRef<TouchDropTarget | null>(null);
 
   useEffect(() => {
     const savedDisplayMode = window.localStorage.getItem("totonou-display-mode");
@@ -1085,6 +1099,49 @@ export function TodoApp() {
     if (sourceId) void reorderTabs(sourceId, targetId, placeAfter);
   }
 
+  function updateTouchDropTarget(target: TouchDropTarget | null, key = "") {
+    touchDropTargetRef.current = target;
+    setTouchDropTargetKey((current) => current === key ? current : key);
+  }
+
+  function clearTouchDragState() {
+    touchDropTargetRef.current = null;
+    setTouchDropTargetKey("");
+    setDraggingTabId(null);
+    setDraggingTaskId(null);
+  }
+
+  function handleTabTouchStart(event: TouchEvent<HTMLButtonElement>, sourceId: string) {
+    event.stopPropagation();
+    updateTouchDropTarget(null);
+    setDraggingTabId(sourceId);
+  }
+
+  function handleTabTouchMove(event: TouchEvent<HTMLButtonElement>) {
+    const touch = event.touches[0];
+    if (!touch) return;
+    event.preventDefault();
+    const target = document
+      .elementFromPoint(touch.clientX, touch.clientY)
+      ?.closest<HTMLElement>("[data-todo-tab-id]");
+    const targetId = target?.dataset.todoTabId;
+    if (!target || !targetId) {
+      updateTouchDropTarget(null);
+      return;
+    }
+    const bounds = target.getBoundingClientRect();
+    const placeAfter = touch.clientX > bounds.left + bounds.width / 2;
+    updateTouchDropTarget({ kind: "tab", targetId, placeAfter }, `tab:${targetId}`);
+  }
+
+  function handleTabTouchEnd(sourceId: string) {
+    const target = touchDropTargetRef.current;
+    clearTouchDragState();
+    if (target?.kind === "tab" && target.targetId !== sourceId) {
+      void reorderTabs(sourceId, target.targetId, target.placeAfter);
+    }
+  }
+
   function handleTabHandleKeyDown(event: KeyboardEvent<HTMLButtonElement>, tab: TodoTab) {
     if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
     event.preventDefault();
@@ -1434,6 +1491,60 @@ export function TodoApp() {
       event.dataTransfer.getData("application/x-todo-task") ||
       event.dataTransfer.getData("text/plain");
     return tasks.find((item) => item.id === sourceId);
+  }
+
+  function handleTaskTouchStart(event: TouchEvent<HTMLButtonElement>, task: Task) {
+    if (editingTitleId === task.id) return;
+    event.stopPropagation();
+    updateTouchDropTarget(null);
+    setDraggingTaskId(task.id);
+  }
+
+  function handleTaskTouchMove(event: TouchEvent<HTMLButtonElement>) {
+    const touch = event.touches[0];
+    if (!touch) return;
+    event.preventDefault();
+    const element = document.elementFromPoint(touch.clientX, touch.clientY);
+    const card = element?.closest<HTMLElement>("[data-todo-task-id]");
+    const targetId = card?.dataset.todoTaskId;
+    const cardStatus = card?.dataset.todoTaskStatus;
+    if (card && targetId && cardStatus && cardStatus in statusLabels) {
+      const bounds = card.getBoundingClientRect();
+      const placeAfter = touch.clientY > bounds.top + bounds.height / 2;
+      updateTouchDropTarget({
+        kind: "task",
+        targetId,
+        targetStatus: cardStatus as TaskStatus,
+        keepStatus: card.dataset.taskKeepStatus === "true",
+        placeAfter,
+      }, `task:${targetId}`);
+      return;
+    }
+    const column = element?.closest<HTMLElement>("[data-kanban-status]");
+    const columnStatus = column?.dataset.kanbanStatus;
+    if (columnStatus && columnStatus in statusLabels) {
+      updateTouchDropTarget(
+        { kind: "kanban", targetStatus: columnStatus as TaskStatus },
+        `kanban:${columnStatus}`,
+      );
+      return;
+    }
+    updateTouchDropTarget(null);
+  }
+
+  function handleTaskTouchEnd(task: Task) {
+    const target = touchDropTargetRef.current;
+    clearTouchDragState();
+    if (target?.kind === "task" && target.targetId !== task.id) {
+      void moveTaskStatus(
+        task,
+        target.keepStatus ? task.status : target.targetStatus,
+        target.targetId,
+        target.placeAfter,
+      );
+    } else if (target?.kind === "kanban") {
+      void moveTaskStatus(task, target.targetStatus, undefined, false, true);
+    }
   }
 
   function handleTaskCardDrop(event: DragEvent<HTMLElement>, targetTask: Task, keepStatus: boolean) {
@@ -1908,8 +2019,9 @@ export function TodoApp() {
               const tabCount = tasks.filter((task) => task.tabId === tab.id && !isDeleted(task)).length;
               return (
                 <div
-                  className={`custom-tab-shell${draggingTabId === tab.id ? " dragging" : ""}`}
+                  className={`custom-tab-shell${draggingTabId === tab.id ? " dragging" : ""}${touchDropTargetKey === `tab:${tab.id}` ? " touch-drop-target" : ""}`}
                   key={tab.id}
+                  data-todo-tab-id={tab.id}
                   onDragOver={(event) => {
                     event.preventDefault();
                     event.dataTransfer.dropEffect = "move";
@@ -1921,7 +2033,7 @@ export function TodoApp() {
                     className="tab-drag-handle"
                     draggable
                     aria-label={`${tab.name}をドラッグして並び替え`}
-                    title="ドラッグで並び替え（Alt＋左右キーにも対応）"
+                    title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋左右キーにも対応）"
                     onDragStart={(event) => {
                       setDraggingTabId(tab.id);
                       event.dataTransfer.effectAllowed = "move";
@@ -1929,6 +2041,10 @@ export function TodoApp() {
                     }}
                     onDragEnd={() => setDraggingTabId(null)}
                     onKeyDown={(event) => handleTabHandleKeyDown(event, tab)}
+                    onTouchStart={(event) => handleTabTouchStart(event, tab.id)}
+                    onTouchMove={handleTabTouchMove}
+                    onTouchEnd={() => handleTabTouchEnd(tab.id)}
+                    onTouchCancel={clearTouchDragState}
                   >
                     ⠿
                   </button>
@@ -2045,14 +2161,15 @@ export function TodoApp() {
           )}
           {!isLoading && visibleTasks.length > 0 && effectiveDisplayMode === "kanban" && (
             <div className="kanban-wrap">
-              <p className="view-hint">⠿をドラッグして並び替え・列移動。タイトルはダブルクリック、または✎から直接編集できます。</p>
+              <p className="view-hint">⠿をドラッグ（スマホは押さえたまま移動）して並び替え・列移動。タイトルはダブルクリック、または✎から直接編集できます。</p>
               <div className="kanban-board" aria-label="かんばんボード">
                 {(Object.keys(statusLabels) as TaskStatus[]).map((status) => {
                   const columnTasks = visibleTasks.filter((task) => task.status === status);
                   return (
                     <div
-                      className={`kanban-column kanban-${status}`}
+                      className={`kanban-column kanban-${status}${touchDropTargetKey === `kanban:${status}` ? " touch-drop-target" : ""}`}
                       key={status}
+                      data-kanban-status={status}
                       onDragOver={(event) => {
                         event.preventDefault();
                         event.dataTransfer.dropEffect = "move";
@@ -2069,9 +2186,12 @@ export function TodoApp() {
                           const deadline = dueLabel(task);
                           return (
                             <article
-                              className={`kanban-card${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}`}
+                              className={`kanban-card${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}${touchDropTargetKey === `task:${task.id}` ? " touch-drop-target" : ""}`}
                               key={task.id}
                               tabIndex={0}
+                              data-todo-task-id={task.id}
+                              data-todo-task-status={task.status}
+                              data-task-keep-status="false"
                               onPaste={(event) => void handleCardPaste(event, task)}
                               onDragOver={(event) => {
                                 event.preventDefault();
@@ -2085,10 +2205,14 @@ export function TodoApp() {
                                   className="task-drag-handle"
                                   draggable={editingTitleId !== task.id}
                                   aria-label={`${task.title}をドラッグして並び替え`}
-                                  title="ドラッグで並び替え（Alt＋上下キーにも対応）"
+                                  title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋上下キーにも対応）"
                                   onDragStart={(event) => handleTaskDragStart(event, task)}
                                   onDragEnd={() => setDraggingTaskId(null)}
                                   onKeyDown={(event) => handleTaskHandleKeyDown(event, task, columnTasks)}
+                                  onTouchStart={(event) => handleTaskTouchStart(event, task)}
+                                  onTouchMove={handleTaskTouchMove}
+                                  onTouchEnd={() => handleTaskTouchEnd(task)}
+                                  onTouchCancel={clearTouchDragState}
                                 >
                                   ⠿
                                 </button>
@@ -2276,7 +2400,7 @@ export function TodoApp() {
             <>
               {activeView !== "trash" && (
                 <p className="view-hint list-view-hint">
-                  ⠿をドラッグして並び替え。タイトルはダブルクリック、または✎から直接編集できます。
+                  ⠿をドラッグ（スマホは押さえたまま移動）して並び替え。タイトルはダブルクリック、または✎から直接編集できます。
                 </p>
               )}
               <div className="task-list">
@@ -2284,9 +2408,12 @@ export function TodoApp() {
                 const deadline = dueLabel(task);
                 return (
                   <article
-                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}`}
+                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}${touchDropTargetKey === `task:${task.id}` ? " touch-drop-target" : ""}`}
                     key={task.id}
                     tabIndex={0}
+                    data-todo-task-id={activeView !== "trash" ? task.id : undefined}
+                    data-todo-task-status={activeView !== "trash" ? task.status : undefined}
+                    data-task-keep-status={activeView !== "trash" ? "true" : undefined}
                     onPaste={activeView !== "trash" ? (event) => void handleCardPaste(event, task) : undefined}
                     onDragOver={activeView !== "trash" ? (event) => {
                       event.preventDefault();
@@ -2315,10 +2442,14 @@ export function TodoApp() {
                             className="task-drag-handle"
                             draggable={editingTitleId !== task.id}
                             aria-label={`${task.title}をドラッグして並び替え`}
-                            title="ドラッグで並び替え（Alt＋上下キーにも対応）"
+                            title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋上下キーにも対応）"
                             onDragStart={(event) => handleTaskDragStart(event, task)}
                             onDragEnd={() => setDraggingTaskId(null)}
                             onKeyDown={(event) => handleTaskHandleKeyDown(event, task, visibleTasks)}
+                            onTouchStart={(event) => handleTaskTouchStart(event, task)}
+                            onTouchMove={handleTaskTouchMove}
+                            onTouchEnd={() => handleTaskTouchEnd(task)}
+                            onTouchCancel={clearTouchDragState}
                           >
                             ⠿
                           </button>

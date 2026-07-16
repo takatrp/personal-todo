@@ -81,6 +81,8 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /sortOrder/);
   assert.match(app, /function reorderTabs/);
   assert.match(app, /function handleTaskCardDrop/);
+  assert.match(app, /function handleTaskTouchMove/);
+  assert.match(app, /onTouchStart/);
   assert.match(app, /onDoubleClick/);
   assert.match(app, /nativeEvent\.isComposing/);
   assert.match(app, /startAt: task\.startAt \?\? ""/);
@@ -107,6 +109,7 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.inline-title-input/);
   assert.match(css, /\.task-drag-handle/);
   assert.match(css, /\.tab-drag-handle/);
+  assert.match(css, /touch-action: none/);
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion/);
