@@ -5,6 +5,7 @@ import {
   CSSProperties,
   DragEvent,
   FormEvent,
+  HTMLAttributes,
   KeyboardEvent,
   TouchEvent,
   useEffect,
@@ -12,6 +13,54 @@ import {
   useRef,
   useState,
 } from "react";
+import "@phosphor-icons/web/regular";
+import "@phosphor-icons/web/bold";
+import "@phosphor-icons/web/fill";
+
+type WebIconProps = HTMLAttributes<HTMLElement> & {
+  size?: number | string;
+  weight?: "regular" | "bold" | "fill";
+};
+
+function createPhosphorIcon(name: string) {
+  return function PhosphorWebIcon({ size = 20, weight = "regular", className = "", style, ...props }: WebIconProps) {
+    const weightClass = weight === "regular" ? "ph" : `ph-${weight}`;
+    return (
+      <i
+        {...props}
+        aria-hidden={props["aria-hidden"] ?? true}
+        className={`${weightClass} ph-${name} ${className}`.trim()}
+        style={{ fontSize: size, ...style }}
+      />
+    );
+  };
+}
+
+const ArrowCounterClockwise = createPhosphorIcon("arrow-counter-clockwise");
+const Bell = createPhosphorIcon("bell");
+const CalendarBlank = createPhosphorIcon("calendar-blank");
+const CaretLeft = createPhosphorIcon("caret-left");
+const CaretRight = createPhosphorIcon("caret-right");
+const ChartBarHorizontal = createPhosphorIcon("chart-bar-horizontal");
+const CheckCircle = createPhosphorIcon("check-circle");
+const Clock = createPhosphorIcon("clock");
+const Database = createPhosphorIcon("database");
+const DotsSixVertical = createPhosphorIcon("dots-six-vertical");
+const DotsThree = createPhosphorIcon("dots-three");
+const Funnel = createPhosphorIcon("funnel");
+const Kanban = createPhosphorIcon("kanban");
+const ListBullets = createPhosphorIcon("list-bullets");
+const MagnifyingGlass = createPhosphorIcon("magnifying-glass");
+const Paperclip = createPhosphorIcon("paperclip");
+const PencilSimple = createPhosphorIcon("pencil-simple");
+const Plus = createPhosphorIcon("plus");
+const Repeat = createPhosphorIcon("repeat");
+const SlidersHorizontal = createPhosphorIcon("sliders-horizontal");
+const Tag = createPhosphorIcon("tag");
+const Trash = createPhosphorIcon("trash");
+const User = createPhosphorIcon("user");
+const UsersThree = createPhosphorIcon("users-three");
+const X = createPhosphorIcon("x");
 
 type TaskStatus = "open" | "doing" | "waiting" | "done";
 type ViewKey = "all" | "today" | "overdue" | "upcoming" | "done" | "trash";
@@ -168,6 +217,17 @@ const recurrenceLabels: Record<Recurrence, string> = {
   monthly: "毎月",
 };
 
+const primaryViews: ViewKey[] = ["today", "upcoming", "overdue", "done"];
+
+function ViewIcon({ view }: { view: ViewKey }) {
+  if (view === "today") return <CalendarBlank size={20} weight="regular" />;
+  if (view === "upcoming") return <CalendarBlank size={20} weight="regular" />;
+  if (view === "overdue") return <Clock size={20} weight="fill" />;
+  if (view === "done") return <CheckCircle size={20} weight="regular" />;
+  if (view === "trash") return <Trash size={20} weight="regular" />;
+  return <ListBullets size={20} weight="regular" />;
+}
+
 function createId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -224,6 +284,80 @@ function normalizeTab(tab: TodoTab): TodoTab {
     ...tab,
     sortOrder: Number.isFinite(tab.sortOrder) ? tab.sortOrder : 0,
   };
+}
+
+function buildDesignPreviewData() {
+  const now = new Date();
+  const tomorrow = toLocalDateKey(addLocalDays(now, 1));
+  const yesterday = toLocalDateKey(addLocalDays(now, -1));
+  const createdAt = now.toISOString();
+  const tabs: TodoTab[] = [
+    { id: "preview-shared", name: "共同", sortOrder: 0, createdAt, updatedAt: createdAt },
+    { id: "preview-tkc", name: "TKC", sortOrder: 1000, createdAt, updatedAt: createdAt },
+  ];
+  const baseTask: Omit<Task, "id" | "title" | "sortOrder" | "status" | "dueAt" | "tags" | "tabId"> = {
+    description: "",
+    startAt: "",
+    reminderAt: "",
+    reminderSentAt: "",
+    recurrence: "none",
+    recurrenceGeneratedAt: "",
+    recurrenceSeriesId: "preview",
+    recurrenceSequence: 0,
+    deletedAt: "",
+    requester: "",
+    assignee: "",
+    attachments: [],
+    createdAt,
+    updatedAt: createdAt,
+    completedAt: "",
+  };
+  const tasks: Task[] = [
+    {
+      ...baseTask,
+      id: "preview-monthly",
+      title: "月次資料を確認する",
+      sortOrder: 0,
+      status: "doing",
+      dueAt: `${yesterday}T18:10`,
+      tags: ["共同"],
+      tabId: "preview-shared",
+      assignee: "山田 太郎",
+    },
+    {
+      ...baseTask,
+      id: "preview-reply",
+      title: "顧問先へ確認事項を返信する",
+      sortOrder: 1000,
+      status: "open",
+      dueAt: `${yesterday}T17:00`,
+      tags: ["TKC"],
+      tabId: "preview-shared",
+      requester: "松本会計",
+    },
+    {
+      ...baseTask,
+      id: "preview-meeting",
+      title: "来週の打ち合わせ資料を準備する",
+      sortOrder: 2000,
+      status: "waiting",
+      dueAt: tomorrow,
+      tags: ["共同", "資料"],
+      tabId: "preview-shared",
+      description: "議題と前回の宿題を1枚にまとめる。",
+    },
+    {
+      ...baseTask,
+      id: "preview-filing",
+      title: "電子申告の送信前チェック",
+      sortOrder: 3000,
+      status: "open",
+      dueAt: tomorrow,
+      tags: ["TKC"],
+      tabId: "preview-tkc",
+    },
+  ];
+  return { tasks, tabs };
 }
 
 async function readTasks(): Promise<Task[]> {
@@ -726,6 +860,8 @@ export function TodoApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(true);
   const [form, setForm] = useState<TaskForm>(initialForm);
   const [todayText, setTodayText] = useState("予定をひと目で整理");
   const [notice, setNotice] = useState("");
@@ -742,11 +878,18 @@ export function TodoApp() {
   const reminderCheckRef = useRef(false);
   const canceledTitleEditRef = useRef<string | null>(null);
   const savingTitleIdRef = useRef<string | null>(null);
+  const lastTitleClickRef = useRef<{ taskId: string; at: number } | null>(null);
   const touchDropTargetRef = useRef<TouchDropTarget | null>(null);
 
   useEffect(() => {
+    const isDesignPreview = new URLSearchParams(window.location.search).get("design-preview") === "1";
+    const previewData = isDesignPreview ? buildDesignPreviewData() : null;
     const savedDisplayMode = window.localStorage.getItem("totonou-display-mode");
-    if (savedDisplayMode === "list" || savedDisplayMode === "kanban" || savedDisplayMode === "gantt") {
+    if (previewData) {
+      setActiveTabId("preview-shared");
+      setActiveView("overdue");
+      setDisplayMode("list");
+    } else if (savedDisplayMode === "list" || savedDisplayMode === "kanban" || savedDisplayMode === "gantt") {
       setDisplayMode(savedDisplayMode);
     }
     setTimelineStart(toLocalDateKey(localDayStart()));
@@ -761,11 +904,18 @@ export function TodoApp() {
     );
     Promise.all([readTasks(), readTabs(), readTemplates()])
       .then(([savedTasks, savedTabs, savedTemplates]) => {
-        setTasks(sortTasks(savedTasks));
-        setTabs(savedTabs);
+        setTasks(sortTasks(previewData && savedTasks.length === 0 ? previewData.tasks : savedTasks));
+        setTabs(previewData && savedTabs.length === 0 ? previewData.tabs : savedTabs);
         setTemplates(savedTemplates);
       })
-      .catch(() => setStorageError(true))
+      .catch(() => {
+        if (previewData) {
+          setTasks(sortTasks(previewData.tasks));
+          setTabs(previewData.tabs);
+        } else {
+          setStorageError(true);
+        }
+      })
       .finally(() => setIsLoading(false));
   }, []);
 
@@ -946,6 +1096,10 @@ export function TodoApp() {
   }, [timelineStart]);
 
   const effectiveDisplayMode: DisplayMode = activeView === "trash" ? "list" : displayMode;
+  const selectedTask = effectiveDisplayMode === "list" && activeView !== "trash"
+    ? visibleTasks.find((task) => task.id === selectedTaskId) ?? visibleTasks[0] ?? null
+    : null;
+  const selectedTaskDeadline = selectedTask ? dueLabel(selectedTask) : null;
   const activeTaskCount = useMemo(() => tasks.filter((task) => !isDeleted(task)).length, [tasks]);
   const trashTaskCount = useMemo(() => tasks.filter(isDeleted).length, [tasks]);
   const totalAttachmentSize = useMemo(() => tasks.reduce(
@@ -964,6 +1118,11 @@ export function TodoApp() {
 
   function showAllTasks() {
     setActiveTabId("all");
+    setActiveView("all");
+    setSearch("");
+  }
+
+  function clearFilterConditions() {
     setActiveView("all");
     setSearch("");
   }
@@ -1026,8 +1185,8 @@ export function TodoApp() {
     }
   }
 
-  function renderInlineTitle(task: Task, className: string) {
-    if (editingTitleId === task.id) {
+  function renderInlineTitle(task: Task, className: string, showInput = true) {
+    if (editingTitleId === task.id && showInput) {
       return (
         <input
           className="inline-title-input"
@@ -1050,9 +1209,20 @@ export function TodoApp() {
         className={className}
         draggable={false}
         title="ダブルクリックでタイトルを編集"
+        onClick={(event) => {
+          event.stopPropagation();
+          const now = Date.now();
+          const lastClick = lastTitleClickRef.current;
+          if (event.detail >= 2 || (lastClick?.taskId === task.id && now - lastClick.at < 500)) {
+            lastTitleClickRef.current = null;
+            window.setTimeout(() => beginInlineTitleEdit(task), 0);
+          } else {
+            lastTitleClickRef.current = { taskId: task.id, at: now };
+          }
+        }}
         onDoubleClick={(event) => {
           event.stopPropagation();
-          beginInlineTitleEdit(task);
+          window.setTimeout(() => beginInlineTitleEdit(task), 0);
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === "F2") {
@@ -1945,6 +2115,17 @@ export function TodoApp() {
     event.preventDefault();
   }
 
+  const workspaceTitle = activeTab?.name ?? (activeView === "all" ? "すべてのToDo" : viewLabels[activeView]);
+  const workspaceDescription = activeTab
+    ? `「${activeTab.name}」にまとめたToDo。`
+    : activeView === "all"
+      ? "すべての仕事をまとめて確認できます。"
+      : `${viewLabels[activeView]}の仕事を確認しています。`;
+  const filterLabel = activeView !== "all"
+    ? `${activeTab ? `${activeTab.name} × ` : ""}${viewLabels[activeView]}`
+    : search.trim()
+      ? `検索：${search.trim()}`
+      : "";
   const sectionTitle = activeTab ? `${activeTab.name}・${viewLabels[activeView]}` : viewLabels[activeView];
   const emptyTitle = activeView === "trash" && !search
     ? "ゴミ箱は空です"
@@ -1957,69 +2138,121 @@ export function TodoApp() {
       <aside className="sidebar" aria-label="ToDoの表示切替">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">と</span>
-          <div>
-            <strong>ととのうToDo</strong>
-            <span>毎日の仕事を、軽やかに。</span>
-          </div>
         </div>
 
         <nav className="side-nav">
-          {(Object.keys(viewLabels) as ViewKey[]).map((view) => (
+          {primaryViews.map((view) => (
             <button
               className={activeView === view ? "nav-item active" : "nav-item"}
               key={view}
               onClick={() => setActiveView(view)}
               type="button"
             >
-              <span className={`nav-dot ${view}`} aria-hidden="true" />
-              <span>{viewLabels[view]}</span>
+              <ViewIcon view={view} />
+              <span>{view === "today" ? "今日" : viewLabels[view]}</span>
               <span className="nav-count">{counts[view]}</span>
             </button>
           ))}
         </nav>
 
-        <div className="local-note">
-          <span className="local-note-icon" aria-hidden="true">⌂</span>
-          <div>
-            <strong>この端末だけに保存</strong>
-            <p>登録内容と添付は外部へ送信されません。</p>
+        <div className="sidebar-footer">
+          <button type="button" className="sidebar-tool sidebar-settings" onClick={() => setIsDataManagerOpen(true)}>
+            <SlidersHorizontal size={20} />
+            <span>設定</span>
+          </button>
+          <button
+            type="button"
+            className={activeView === "trash" ? "sidebar-tool sidebar-trash active" : "sidebar-tool sidebar-trash"}
+            onClick={() => setActiveView("trash")}
+          >
+            <Trash size={20} />
+            <span>ゴミ箱</span>
+            <span className="nav-count">{trashTaskCount}</span>
+          </button>
+          <div className="sidebar-profile">
+            <span className="sidebar-profile-icon"><User size={19} /></span>
+            <div>
+              <strong>個人利用</strong>
+              <span>この端末に保存</span>
+            </div>
           </div>
         </div>
       </aside>
 
       <main className="main-content">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">MY TASKS</p>
-            <h1>今日のToDo</h1>
+        <header className="workspace-header">
+          <div className="product-bar">
+            <div className="product-wordmark">
+              <strong>ととのうToDo</strong>
+              <span>毎日の仕事を、軽やかに。</span>
+            </div>
+            <div className="header-actions">
+              {activeView !== "trash" && (
+                <button className="primary-button desktop-create" type="button" onClick={openCreateForm}>
+                  <Plus size={19} weight="bold" /> ToDoを追加
+                </button>
+              )}
+              <details className="header-menu">
+                <summary aria-label="その他の操作"><DotsThree size={22} weight="bold" /></summary>
+                <div>
+                  <button type="button" onClick={openTabManager}><Plus size={17} /> タブを管理</button>
+                  <button type="button" onClick={() => setIsDataManagerOpen(true)}><Database size={17} /> データ管理</button>
+                  <button type="button" onClick={() => setActiveView("trash")}><Trash size={17} /> ゴミ箱</button>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div className="workspace-heading">
+            <div>
+              <p className="eyebrow">ワークスペース</p>
+              <div className="workspace-title-row">
+                <span className="workspace-title-icon" aria-hidden="true">
+                  {activeTab ? <UsersThree size={30} weight="regular" /> : <ListBullets size={29} weight="regular" />}
+                </span>
+                <h1>{workspaceTitle}</h1>
+                <span className="workspace-count">{visibleTasks.length}件</span>
+              </div>
+              <p className="workspace-description">{workspaceDescription}</p>
+            </div>
             <p className="today-label">{todayText}</p>
           </div>
-          {activeView !== "trash" && (
-            <button className="primary-button desktop-create" type="button" onClick={openCreateForm}>
-              <span aria-hidden="true">＋</span> 新しいToDo
-            </button>
+
+          {(filterLabel || search) && (
+            <div className="active-filter-row">
+              <strong><Funnel size={17} /> フィルター</strong>
+              {filterLabel && (
+                <span className="active-filter-chip">
+                  {filterLabel}
+                  <button type="button" onClick={clearFilterConditions} aria-label="表示条件を解除"><X size={14} /></button>
+                </span>
+              )}
+              <button type="button" className="clear-filter-button" onClick={clearFilterConditions}>条件を解除</button>
+            </div>
           )}
         </header>
 
         <section className="scope-toolbar" aria-label="ToDoのタブ切替">
-          <button
-            type="button"
-            className={activeTabId === "all" && activeView === "all" && !search ? "all-tasks-button active" : "all-tasks-button"}
-            onClick={showAllTasks}
-            aria-pressed={activeTabId === "all" && activeView === "all" && !search}
-          >
-            <span aria-hidden="true">☷</span>
-            <strong>すべてのToDo</strong>
-            <small>{activeTaskCount}件</small>
-          </button>
           <nav className="custom-tab-list" aria-label="カスタムタブ">
+            <div className={`custom-tab-shell all-tab-shell${activeTabId === "all" ? " selected" : ""}`}>
+              <span className="tab-leading-icon" aria-hidden="true"><ListBullets size={18} /></span>
+              <button
+                type="button"
+                className={activeTabId === "all" ? "custom-tab active" : "custom-tab"}
+                onClick={() => setActiveTabId("all")}
+                aria-pressed={activeTabId === "all"}
+              >
+                <span>すべてのToDo</span>
+                <small>{activeTaskCount}</small>
+              </button>
+            </div>
             {tabs.length === 0 ? (
               <span className="tabs-empty-hint">タブを追加すると、仕事ごとに切り替えられます</span>
             ) : tabs.map((tab) => {
               const tabCount = tasks.filter((task) => task.tabId === tab.id && !isDeleted(task)).length;
               return (
                 <div
-                  className={`custom-tab-shell${draggingTabId === tab.id ? " dragging" : ""}${touchDropTargetKey === `tab:${tab.id}` ? " touch-drop-target" : ""}`}
+                  className={`custom-tab-shell${activeTabId === tab.id ? " selected" : ""}${draggingTabId === tab.id ? " dragging" : ""}${touchDropTargetKey === `tab:${tab.id}` ? " touch-drop-target" : ""}`}
                   key={tab.id}
                   data-todo-tab-id={tab.id}
                   onDragOver={(event) => {
@@ -2046,7 +2279,7 @@ export function TodoApp() {
                     onTouchEnd={() => handleTabTouchEnd(tab.id)}
                     onTouchCancel={clearTouchDragState}
                   >
-                    ⠿
+                    <DotsSixVertical size={18} weight="bold" />
                   </button>
                   <button
                     type="button"
@@ -2061,57 +2294,17 @@ export function TodoApp() {
               );
             })}
           </nav>
-          <div className="scope-tools">
-            <button type="button" className="manage-tabs-button" onClick={openTabManager}>
-              <span aria-hidden="true">＋</span> タブ管理
-            </button>
-            <button type="button" className="data-tools-button" onClick={() => setIsDataManagerOpen(true)}>
-              <span aria-hidden="true">⇅</span> データ管理
-            </button>
-          </div>
-        </section>
-
-        <section className="stats-grid" aria-label="ToDoの集計">
-          <button type="button" className="stat-card stat-today" onClick={() => setActiveView("today")}>
-            <span>今日が期限</span>
-            <strong>{counts.today}</strong>
-            <small>件</small>
-          </button>
-          <button type="button" className="stat-card stat-overdue" onClick={() => setActiveView("overdue")}>
-            <span>期限超過</span>
-            <strong>{counts.overdue}</strong>
-            <small>件</small>
-          </button>
-          <button type="button" className="stat-card stat-upcoming" onClick={() => setActiveView("upcoming")}>
-            <span>今後7日</span>
-            <strong>{counts.upcoming}</strong>
-            <small>件</small>
-          </button>
-          <button type="button" className="stat-card stat-done" onClick={() => setActiveView("done")}>
-            <span>完了済み</span>
-            <strong>{counts.done}</strong>
-            <small>件</small>
+          <button type="button" className="add-tab-button" onClick={openTabManager}>
+            <Plus size={18} /> 新しいタブ
           </button>
         </section>
 
-        <nav className="mobile-view-tabs" aria-label="ToDoの表示切替">
-          {(Object.keys(viewLabels) as ViewKey[]).map((view) => (
-            <button
-              className={activeView === view ? "active" : ""}
-              key={view}
-              onClick={() => setActiveView(view)}
-              type="button"
-            >
-              {viewLabels[view]} <span>{counts[view]}</span>
-            </button>
-          ))}
-        </nav>
-
+        <div className={`workspace-grid${isDetailPanelOpen && selectedTask ? " detail-open" : " detail-closed"}`}>
         <section className="task-section" aria-labelledby="task-list-heading">
           <div className="section-toolbar">
-            <div>
-              <h2 id="task-list-heading">{sectionTitle}</h2>
-              <p>{visibleTasks.length}件を表示</p>
+            <div className="section-summary">
+              <h2 id="task-list-heading">{visibleTasks.length}件のToDo</h2>
+              <p>{sectionTitle}</p>
             </div>
             <div className="toolbar-actions">
               {activeView === "trash" ? (
@@ -2123,34 +2316,38 @@ export function TodoApp() {
                   className={displayMode === "list" ? "active" : ""}
                   onClick={() => switchDisplayMode("list")}
                 >
-                  <span aria-hidden="true">☷</span> 一覧
+                  <ListBullets size={18} /> 一覧
                 </button>
                 <button
                   type="button"
                   className={displayMode === "kanban" ? "active" : ""}
                   onClick={() => switchDisplayMode("kanban")}
                 >
-                  <span aria-hidden="true">▥</span> かんばん
+                  <Kanban size={18} /> かんばん
                 </button>
                 <button
                   type="button"
                   className={displayMode === "gantt" ? "active" : ""}
                   onClick={() => switchDisplayMode("gantt")}
                 >
-                  <span aria-hidden="true">▬</span> ガント
+                  <ChartBarHorizontal size={18} /> ガント
                 </button>
                 </div>
               )}
-              <label className="search-box">
-                <span aria-hidden="true">⌕</span>
-                <span className="sr-only">ToDoを検索</span>
+              <div className="search-box">
+                <MagnifyingGlass size={18} aria-hidden="true" />
+                <label className="sr-only" htmlFor="task-search">ToDoを検索</label>
                 <input
+                  id="task-search"
                   type="search"
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="タイトル・タグ・タブ・依頼元で検索"
+                  placeholder="検索"
                 />
-              </label>
+                {search && (
+                  <button type="button" onClick={() => setSearch("")} aria-label="検索をクリア"><X size={15} /></button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -2161,7 +2358,7 @@ export function TodoApp() {
           )}
           {!isLoading && visibleTasks.length > 0 && effectiveDisplayMode === "kanban" && (
             <div className="kanban-wrap">
-              <p className="view-hint">⠿をドラッグ（スマホは押さえたまま移動）して並び替え・列移動。タイトルはダブルクリック、または✎から直接編集できます。</p>
+              <p className="view-hint">カード左のハンドルをドラッグして並び替え・列移動。タイトルはダブルクリック、または編集ボタンから変更できます。</p>
               <div className="kanban-board" aria-label="かんばんボード">
                 {(Object.keys(statusLabels) as TaskStatus[]).map((status) => {
                   const columnTasks = visibleTasks.filter((task) => task.status === status);
@@ -2214,7 +2411,7 @@ export function TodoApp() {
                                   onTouchEnd={() => handleTaskTouchEnd(task)}
                                   onTouchCancel={clearTouchDragState}
                                 >
-                                  ⠿
+                                  <DotsSixVertical size={18} weight="bold" />
                                 </button>
                                 {renderInlineTitle(task, "kanban-card-title")}
                                 {editingTitleId !== task.id && (
@@ -2225,7 +2422,7 @@ export function TodoApp() {
                                     aria-label={`${task.title}のタイトルを直接編集`}
                                     title="タイトルを直接編集"
                                   >
-                                    ✎
+                                    <PencilSimple size={15} />
                                   </button>
                                 )}
                               </div>
@@ -2238,13 +2435,13 @@ export function TodoApp() {
                                 </div>
                               )}
                               {task.tabId && tabNameById.has(task.tabId) && (
-                                <span className="task-tab-badge">▣ {tabNameById.get(task.tabId)}</span>
+                                <span className="task-tab-badge">{tabNameById.get(task.tabId)}</span>
                               )}
                               {task.description && <p>{task.description}</p>}
                               <div className="kanban-card-meta">
-                                <span className={`due-label ${deadline.tone}`}>◷ {deadline.label}</span>
-                                {task.reminderAt && <span>♢ 通知 {formatDateTime(task.reminderAt)}</span>}
-                                {task.recurrence !== "none" && <span>↻ {recurrenceLabels[task.recurrence]}</span>}
+                                <span className={`due-label ${deadline.tone}`}><Clock size={14} /> {deadline.label}</span>
+                                {task.reminderAt && <span><Bell size={14} /> 通知 {formatDateTime(task.reminderAt)}</span>}
+                                {task.recurrence !== "none" && <span><Repeat size={14} /> {recurrenceLabels[task.recurrence]}</span>}
                                 {task.assignee && <span>担当 {task.assignee}</span>}
                                 {task.attachments.length > 0 && <span>添付 {task.attachments.length}件</span>}
                               </div>
@@ -2256,7 +2453,7 @@ export function TodoApp() {
                                     className="kanban-image-preview"
                                     onClick={(event) => openImagePreview(image, task.title, event.currentTarget)}
                                   >
-                                    ▧ {image.name}を表示
+                                    <Paperclip size={15} /> {image.name}を表示
                                   </button>
                                 );
                               })()}
@@ -2283,7 +2480,7 @@ export function TodoApp() {
                         )}
                       </div>
                       <button className="kanban-add" type="button" onClick={() => openCreateForStatus(status)}>
-                        ＋ ToDoを追加
+                        <Plus size={17} /> ToDoを追加
                       </button>
                     </div>
                   );
@@ -2303,9 +2500,9 @@ export function TodoApp() {
                   </span>
                 </div>
                 <div className="gantt-nav" aria-label="ガントチャートの期間移動">
-                  <button type="button" onClick={() => shiftTimeline(-GANTT_DAYS)} aria-label="前の14日">‹</button>
+                  <button type="button" onClick={() => shiftTimeline(-GANTT_DAYS)} aria-label="前の14日"><CaretLeft size={17} /></button>
                   <button type="button" onClick={resetTimeline}>今日</button>
-                  <button type="button" onClick={() => shiftTimeline(GANTT_DAYS)} aria-label="次の14日">›</button>
+                  <button type="button" onClick={() => shiftTimeline(GANTT_DAYS)} aria-label="次の14日"><CaretRight size={17} /></button>
                 </div>
               </div>
               <div className="gantt-scroll">
@@ -2333,7 +2530,7 @@ export function TodoApp() {
                         <button className="gantt-task-cell" type="button" onClick={() => openEditForm(task)}>
                           <span><i className={`status-${task.status}`} />{task.title}</span>
                           <small>{task.dueAt ? `期限 ${formatDateTime(task.dueAt)}` : "期限未設定"}</small>
-                          {task.reminderAt && <small className="gantt-reminder">♢ 通知 {formatDateTime(task.reminderAt)}</small>}
+                          {task.reminderAt && <small className="gantt-reminder"><Bell size={13} /> 通知 {formatDateTime(task.reminderAt)}</small>}
                         </button>
                         <div className="gantt-calendar">
                           {timelineDays.map((day, index) => (
@@ -2381,7 +2578,7 @@ export function TodoApp() {
             </div>
           ) : visibleTasks.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-symbol" aria-hidden="true">✓</div>
+              <div className="empty-symbol" aria-hidden="true"><CheckCircle size={38} weight="regular" /></div>
               <h3>{emptyTitle}</h3>
               <p>
                 {activeView === "trash"
@@ -2397,20 +2594,21 @@ export function TodoApp() {
               )}
             </div>
           ) : effectiveDisplayMode === "list" ? (
-            <>
-              {activeView !== "trash" && (
-                <p className="view-hint list-view-hint">
-                  ⠿をドラッグ（スマホは押さえたまま移動）して並び替え。タイトルはダブルクリック、または✎から直接編集できます。
-                </p>
-              )}
+            <div className="list-view">
+              <div className="task-table-header" aria-hidden="true">
+                <span>タイトル</span>
+                <span>期限</span>
+                <span>ステータス</span>
+              </div>
               <div className="task-list">
               {visibleTasks.map((task) => {
                 const deadline = dueLabel(task);
                 return (
                   <article
-                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}${touchDropTargetKey === `task:${task.id}` ? " touch-drop-target" : ""}`}
+                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${deadline.tone === "danger" ? " overdue-row" : ""}${selectedTask?.id === task.id && isDetailPanelOpen ? " selected" : ""}${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}${touchDropTargetKey === `task:${task.id}` ? " touch-drop-target" : ""}`}
                     key={task.id}
                     tabIndex={0}
+                    aria-label={`${task.title}の詳細を表示`}
                     data-todo-task-id={activeView !== "trash" ? task.id : undefined}
                     data-todo-task-status={activeView !== "trash" ? task.status : undefined}
                     data-task-keep-status={activeView !== "trash" ? "true" : undefined}
@@ -2420,9 +2618,21 @@ export function TodoApp() {
                       event.dataTransfer.dropEffect = "move";
                     } : undefined}
                     onDrop={activeView !== "trash" ? (event) => handleTaskCardDrop(event, task, true) : undefined}
+                    onClick={() => {
+                      if (activeView === "trash") return;
+                      setSelectedTaskId(task.id);
+                      setIsDetailPanelOpen(true);
+                    }}
+                    onKeyDown={(event) => {
+                      if (activeView !== "trash" && (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        setSelectedTaskId(task.id);
+                        setIsDetailPanelOpen(true);
+                      }
+                    }}
                   >
                     {activeView === "trash" ? (
-                      <span className="trash-card-icon" aria-hidden="true">♲</span>
+                      <span className="trash-card-icon" aria-hidden="true"><Trash size={20} /></span>
                     ) : (
                       <button
                         type="button"
@@ -2430,30 +2640,31 @@ export function TodoApp() {
                         onClick={() => void toggleComplete(task)}
                         aria-label={isComplete(task) ? `${task.title}を未着手に戻す` : `${task.title}を完了にする`}
                       >
-                        <span aria-hidden="true">✓</span>
+                        <CheckCircle size={22} weight={isComplete(task) ? "fill" : "regular"} aria-hidden="true" />
                       </button>
                     )}
 
-                    <div className="task-body">
+                    {activeView !== "trash" ? (
+                      <button
+                        type="button"
+                        className="task-drag-handle"
+                        draggable={editingTitleId !== task.id}
+                        aria-label={`${task.title}をドラッグして並び替え`}
+                        title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋上下キーにも対応）"
+                        onDragStart={(event) => handleTaskDragStart(event, task)}
+                        onDragEnd={() => setDraggingTaskId(null)}
+                        onKeyDown={(event) => handleTaskHandleKeyDown(event, task, visibleTasks)}
+                        onTouchStart={(event) => handleTaskTouchStart(event, task)}
+                        onTouchMove={handleTaskTouchMove}
+                        onTouchEnd={() => handleTaskTouchEnd(task)}
+                        onTouchCancel={clearTouchDragState}
+                      >
+                        <DotsSixVertical size={18} weight="bold" />
+                      </button>
+                    ) : <span className="task-drag-placeholder" />}
+
+                    <div className="task-title-cell">
                       <div className="task-title-row">
-                        {activeView !== "trash" && (
-                          <button
-                            type="button"
-                            className="task-drag-handle"
-                            draggable={editingTitleId !== task.id}
-                            aria-label={`${task.title}をドラッグして並び替え`}
-                            title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋上下キーにも対応）"
-                            onDragStart={(event) => handleTaskDragStart(event, task)}
-                            onDragEnd={() => setDraggingTaskId(null)}
-                            onKeyDown={(event) => handleTaskHandleKeyDown(event, task, visibleTasks)}
-                            onTouchStart={(event) => handleTaskTouchStart(event, task)}
-                            onTouchMove={handleTaskTouchMove}
-                            onTouchEnd={() => handleTaskTouchEnd(task)}
-                            onTouchCancel={clearTouchDragState}
-                          >
-                            ⠿
-                          </button>
-                        )}
                         <h3>{activeView === "trash" ? task.title : renderInlineTitle(task, "task-title-button")}</h3>
                         {activeView !== "trash" && editingTitleId !== task.id && (
                           <button
@@ -2463,89 +2674,151 @@ export function TodoApp() {
                             aria-label={`${task.title}のタイトルを直接編集`}
                             title="タイトルを直接編集"
                           >
-                            ✎
+                            <PencilSimple size={15} />
                           </button>
                         )}
-                        <span className={`status-badge status-${task.status}`}>{statusLabels[task.status]}</span>
                       </div>
-                      {task.description && <p className="task-description">{task.description}</p>}
-                      {task.tags.length > 0 && (
-                        <div className="tag-row" aria-label="タグ">
-                          {task.tags.map((tag) => <span className="tag" key={tag}>#{tag}</span>)}
-                        </div>
-                      )}
-                      {task.tabId && tabNameById.has(task.tabId) && (
-                        <div className="task-tab-row" aria-label="所属タブ">
-                          <span className="task-tab-badge">▣ {tabNameById.get(task.tabId)}</span>
-                        </div>
-                      )}
-
-                      <div className="task-meta">
-                        {task.startAt && <span><b>開始</b>{formatDateTime(task.startAt)}</span>}
-                        <span className={`due-label ${deadline.tone}`}>
-                          <span aria-hidden="true">◷</span> {deadline.label}
-                        </span>
-                        {task.requester && <span><b>依頼元</b>{task.requester}</span>}
-                        {task.assignee && <span><b>依頼先</b>{task.assignee}</span>}
-                        {task.reminderAt && (
-                          <span className={task.reminderSentAt ? "reminder-label sent" : "reminder-label"}>
-                            <b>通知</b>{formatDateTime(task.reminderAt)}{task.reminderSentAt ? "（通知済み）" : ""}
-                          </span>
+                      <div className="task-row-tags" aria-label="タグと所属タブ">
+                        {task.tags.slice(0, 2).map((tag) => <span className="tag" key={tag}>#{tag}</span>)}
+                        {task.tabId && tabNameById.has(task.tabId) && activeTabId === "all" && (
+                          <span className="task-tab-badge">{tabNameById.get(task.tabId)}</span>
                         )}
-                        {task.recurrence !== "none" && <span className="recurrence-label">↻ {recurrenceLabels[task.recurrence]}</span>}
-                        {activeView === "trash" && <span className="deleted-label">削除 {formatCreatedAt(task.deletedAt)}</span>}
-                        <span className="created-label">登録 {formatCreatedAt(task.createdAt)}</span>
+                        {task.attachments.length > 0 && <span className="attachment-count"><Paperclip size={13} /> {task.attachments.length}</span>}
                       </div>
-
-                      {task.attachments.length > 0 && (
-                        <div className="attachment-row" aria-label="添付ファイル">
-                          {task.attachments.map((attachment) => (
-                            <button
-                              type="button"
-                              key={attachment.id}
-                              className={attachment.type.startsWith("image/") ? "image-attachment" : ""}
-                              onClick={(event) => openImagePreview(attachment, task.title, event.currentTarget)}
-                              title={attachment.type.startsWith("image/") ? `${attachment.name}をプレビュー` : `${attachment.name}を保存`}
-                            >
-                              <span aria-hidden="true">{attachment.type.startsWith("image/") ? "▧" : "⌕"}</span>
-                              <span>{attachment.name}</span>
-                              <small>{formatBytes(attachment.size)}</small>
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {activeView !== "trash" && (
-                        <span className="paste-hint">
-                          {pastingTaskId === task.id ? "画像を添付中…" : `貼り付け先：${task.title}（Ctrl＋V）`}
-                        </span>
-                      )}
                     </div>
 
-                    <div className="task-actions">
-                      {activeView === "trash" ? (
-                        <>
-                          <button type="button" className="restore-action" onClick={() => void restoreTask(task)}>元に戻す</button>
-                          <button type="button" className="delete-action" onClick={() => void permanentlyDeleteTask(task)}>完全に削除</button>
-                        </>
-                      ) : (
-                        <>
-                          <button type="button" onClick={() => openEditForm(task)} aria-label={`${task.title}を編集`}>編集</button>
-                          <button type="button" className="delete-action" onClick={() => void deleteTask(task)} aria-label={`${task.title}を削除`}>削除</button>
-                        </>
-                      )}
+                    <div className={`task-due-cell ${deadline.tone}`}>
+                      <Clock size={16} aria-hidden="true" />
+                      <span>{deadline.label}</span>
                     </div>
+                    <div className="task-status-cell">
+                      <span className={`status-badge status-${task.status}`}>{statusLabels[task.status]}</span>
+                    </div>
+                    {activeView === "trash" ? (
+                      <div className="trash-row-actions">
+                        <button type="button" className="restore-action" onClick={() => void restoreTask(task)}><ArrowCounterClockwise size={16} /> 元に戻す</button>
+                        <button type="button" className="delete-action" onClick={() => void permanentlyDeleteTask(task)}>完全に削除</button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="task-row-menu"
+                        onClick={() => {
+                          setSelectedTaskId(task.id);
+                          setIsDetailPanelOpen(true);
+                        }}
+                        aria-label={`${task.title}の詳細を表示`}
+                      >
+                        <DotsThree size={20} weight="bold" />
+                      </button>
+                    )}
                   </article>
                 );
               })}
               </div>
-            </>
+            </div>
           ) : null}
         </section>
+        {isDetailPanelOpen && selectedTask && effectiveDisplayMode === "list" && activeView !== "trash" && (
+          <aside className={`task-detail-panel ${selectedTaskId ? "user-selected" : "auto-selected"}`} aria-label={`${selectedTask.title}の詳細`} onPaste={(event) => void handleCardPaste(event, selectedTask)}>
+            <header className="detail-panel-header">
+              <div>
+                <div className="detail-title-row">
+                  {renderInlineTitle(selectedTask, "detail-title-button", false)}
+                  <span className={`status-badge status-${selectedTask.status}`}>{statusLabels[selectedTask.status]}</span>
+                </div>
+                <span className="detail-updated">更新 {formatCreatedAt(selectedTask.updatedAt)}</span>
+              </div>
+              <button type="button" onClick={() => setIsDetailPanelOpen(false)} aria-label="詳細を閉じる"><X size={20} /></button>
+            </header>
+
+            <div className="detail-panel-body">
+              <section className="detail-section detail-deadline">
+                <div className="detail-section-label"><CalendarBlank size={18} /><span>期限</span></div>
+                <strong className={selectedTaskDeadline?.tone}>{selectedTaskDeadline?.label}</strong>
+              </section>
+
+              <label className="detail-section detail-status-select">
+                <span className="detail-section-label"><CheckCircle size={18} /> ステータス</span>
+                <select value={selectedTask.status} onChange={(event) => void moveTaskStatus(selectedTask, event.target.value as TaskStatus)}>
+                  {(Object.keys(statusLabels) as TaskStatus[]).map((status) => (
+                    <option value={status} key={status}>{statusLabels[status]}</option>
+                  ))}
+                </select>
+              </label>
+
+              <section className="detail-section">
+                <div className="detail-section-label"><Tag size={18} /><span>タグ</span></div>
+                <div className="detail-tag-list">
+                  {selectedTask.tags.length > 0
+                    ? selectedTask.tags.map((tag) => <span className="tag" key={tag}>#{tag}</span>)
+                    : <span className="detail-empty">未設定</span>}
+                </div>
+              </section>
+
+              {(selectedTask.requester || selectedTask.assignee) && (
+                <section className="detail-section">
+                  <div className="detail-section-label"><User size={18} /><span>依頼情報</span></div>
+                  <div className="detail-people">
+                    {selectedTask.requester && <span><small>依頼元</small>{selectedTask.requester}</span>}
+                    {selectedTask.assignee && <span><small>依頼先</small>{selectedTask.assignee}</span>}
+                  </div>
+                </section>
+              )}
+
+              <section className="detail-section detail-history">
+                <div className="detail-section-label"><Clock size={18} /><span>日時</span></div>
+                <div>
+                  {selectedTask.startAt && <span><small>開始</small>{formatDateTime(selectedTask.startAt)}</span>}
+                  <span><small>登録</small>{formatCreatedAt(selectedTask.createdAt)}</span>
+                </div>
+              </section>
+
+              {selectedTask.description && (
+                <section className="detail-section detail-memo">
+                  <div className="detail-section-label"><PencilSimple size={18} /><span>メモ</span></div>
+                  <p>{selectedTask.description}</p>
+                </section>
+              )}
+
+              {(selectedTask.reminderAt || selectedTask.recurrence !== "none") && (
+                <section className="detail-section detail-automation">
+                  {selectedTask.reminderAt && <span><Bell size={17} /> 通知 {formatDateTime(selectedTask.reminderAt)}</span>}
+                  {selectedTask.recurrence !== "none" && <span><Repeat size={17} /> {recurrenceLabels[selectedTask.recurrence]}</span>}
+                </section>
+              )}
+
+              <section className="detail-section detail-attachments">
+                <div className="detail-section-label"><Paperclip size={18} /><span>添付ファイル</span><small>{selectedTask.attachments.length}</small></div>
+                {selectedTask.attachments.length > 0 ? selectedTask.attachments.map((attachment) => (
+                  <button
+                    type="button"
+                    key={attachment.id}
+                    onClick={(event) => openImagePreview(attachment, selectedTask.title, event.currentTarget)}
+                  >
+                    <Paperclip size={15} />
+                    <span>{attachment.name}</span>
+                    <small>{formatBytes(attachment.size)}</small>
+                  </button>
+                )) : <p className="detail-empty">スクリーンショットは、このパネル上で貼り付けできます。</p>}
+              </section>
+            </div>
+
+            <footer className="detail-panel-actions">
+              <button type="button" className="secondary-button" onClick={() => openEditForm(selectedTask)}><PencilSimple size={17} /> 詳細を編集</button>
+              <button type="button" className="detail-complete-button" onClick={() => void toggleComplete(selectedTask)}>
+                <CheckCircle size={18} /> {isComplete(selectedTask) ? "未着手に戻す" : "このToDoを完了する"}
+              </button>
+              <button type="button" className="detail-delete-button" onClick={() => void deleteTask(selectedTask)}><Trash size={16} /> ゴミ箱へ</button>
+            </footer>
+          </aside>
+        )}
+        </div>
       </main>
 
       {activeView !== "trash" && (
         <button className="mobile-create-button" type="button" onClick={openCreateForm} aria-label="新しいToDoを登録">
-          <span aria-hidden="true">＋</span>
+          <Plus size={20} weight="bold" aria-hidden="true" /> <span>追加</span>
         </button>
       )}
 
@@ -2559,7 +2832,7 @@ export function TodoApp() {
                 <p>{editingId ? "EDIT TASK" : "NEW TASK"}</p>
                 <h2 id="task-form-title">{editingId ? "ToDoを編集" : "新しいToDo"}</h2>
               </div>
-              <button type="button" className="modal-close" onClick={closeForm} aria-label="閉じる">×</button>
+              <button type="button" className="modal-close" onClick={closeForm} aria-label="閉じる"><X size={20} /></button>
             </header>
 
             <form onSubmit={handleSubmit}>
@@ -2758,7 +3031,7 @@ export function TodoApp() {
                         event.target.value = "";
                       }}
                     />
-                    <strong><span aria-hidden="true">＋</span> ファイルを選ぶ</strong>
+                    <strong><Paperclip size={17} aria-hidden="true" /> ファイルを選ぶ</strong>
                     <small>1ファイル8MB・合計20MB・最大10件まで</small>
                   </label>
                   {form.attachments.length > 0 && (
@@ -2826,7 +3099,7 @@ export function TodoApp() {
                 aria-label="閉じる"
                 disabled={isSavingTab}
               >
-                ×
+                <X size={20} />
               </button>
             </header>
 
@@ -2874,7 +3147,7 @@ export function TodoApp() {
                   const tabCount = tasks.filter((task) => task.tabId === tab.id && !isDeleted(task)).length;
                   return (
                     <div className="tab-manager-item" key={tab.id}>
-                      <span className="tab-manager-icon" aria-hidden="true">▣</span>
+                      <span className="tab-manager-icon" aria-hidden="true"><Tag size={17} /></span>
                       <span>
                         <strong>{tab.name}</strong>
                         <small>{tabCount}件のToDo</small>
@@ -2909,7 +3182,7 @@ export function TodoApp() {
                 aria-label="閉じる"
                 disabled={isProcessingData}
               >
-                ×
+                <X size={20} />
               </button>
             </header>
             <div className="data-manager-content">
@@ -3012,7 +3285,7 @@ export function TodoApp() {
                 <p>{previewTarget.taskTitle}</p>
                 <h2 id="image-preview-title">{previewTarget.attachment.name}</h2>
               </div>
-              <button type="button" className="modal-close" onClick={closeImagePreview} aria-label="閉じる">×</button>
+              <button type="button" className="modal-close" onClick={closeImagePreview} aria-label="閉じる"><X size={20} /></button>
             </header>
             <div className="image-preview-stage">
               {previewUrl && !previewLoadError && (
