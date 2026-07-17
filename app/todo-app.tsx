@@ -1208,24 +1208,28 @@ export function TodoApp() {
         type="button"
         className={className}
         draggable={false}
-        title="ダブルクリックでタイトルを編集"
+        title="ダブルクリックで詳細を編集"
         onClick={(event) => {
           event.stopPropagation();
           const now = Date.now();
           const lastClick = lastTitleClickRef.current;
           if (event.detail >= 2 || (lastClick?.taskId === task.id && now - lastClick.at < 500)) {
             lastTitleClickRef.current = null;
-            window.setTimeout(() => beginInlineTitleEdit(task), 0);
+            window.setTimeout(() => openEditForm(task), 0);
           } else {
             lastTitleClickRef.current = { taskId: task.id, at: now };
           }
         }}
         onDoubleClick={(event) => {
           event.stopPropagation();
-          window.setTimeout(() => beginInlineTitleEdit(task), 0);
+          window.setTimeout(() => openEditForm(task), 0);
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === "F2") {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            openEditForm(task);
+          }
+          if (event.key === "F2") {
             event.preventDefault();
             beginInlineTitleEdit(task);
           }

@@ -84,6 +84,9 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /function handleTaskTouchMove/);
   assert.match(app, /onTouchStart/);
   assert.match(app, /onDoubleClick/);
+  assert.match(app, /title="ダブルクリックで詳細を編集"/);
+  assert.match(app, /window\.setTimeout\(\(\) => openEditForm\(task\), 0\)/);
+  assert.match(app, /event\.key === "F2"/);
   assert.match(app, /nativeEvent\.isComposing/);
   assert.match(app, /startAt: task\.startAt \?\? ""/);
   assert.match(app, /tabId: task\.tabId \?\? ""/);
