@@ -87,6 +87,12 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /title="ダブルクリックで詳細を編集"/);
   assert.match(app, /window\.setTimeout\(\(\) => openEditForm\(task\), 0\)/);
   assert.match(app, /event\.key === "F2"/);
+  assert.match(app, /function handleTaskFormKeyDown/);
+  assert.match(app, /\(!event\.ctrlKey && !event\.metaKey\)/);
+  assert.match(app, /event\.currentTarget\.requestSubmit\(\)/);
+  assert.match(app, /onKeyDown=\{handleTaskFormKeyDown\}/);
+  assert.match(app, /aria-keyshortcuts="Control\+Enter Meta\+Enter"/);
+  assert.match(app, /title="Ctrl＋Enterで保存"/);
   assert.match(app, /nativeEvent\.isComposing/);
   assert.match(app, /startAt: task\.startAt \?\? ""/);
   assert.match(app, /tabId: task\.tabId \?\? ""/);

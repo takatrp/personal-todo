@@ -2115,8 +2115,24 @@ export function TodoApp() {
   }
 
   function handleQuickTitleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    if (
+      event.key !== "Enter" ||
+      event.nativeEvent.isComposing ||
+      event.ctrlKey ||
+      event.metaKey
+    ) return;
     event.preventDefault();
+  }
+
+  function handleTaskFormKeyDown(event: KeyboardEvent<HTMLFormElement>) {
+    if (
+      event.key !== "Enter" ||
+      (!event.ctrlKey && !event.metaKey) ||
+      event.nativeEvent.isComposing ||
+      isSaving
+    ) return;
+    event.preventDefault();
+    event.currentTarget.requestSubmit();
   }
 
   const workspaceTitle = activeTab?.name ?? (activeView === "all" ? "すべてのToDo" : viewLabels[activeView]);
@@ -2839,7 +2855,7 @@ export function TodoApp() {
               <button type="button" className="modal-close" onClick={closeForm} aria-label="閉じる"><X size={20} /></button>
             </header>
 
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} onKeyDown={handleTaskFormKeyDown}>
               <div className="form-scroll">
                 {!editingId && templates.length > 0 && (
                   <label className="template-picker">
@@ -3077,7 +3093,13 @@ export function TodoApp() {
 
               <footer className="modal-footer">
                 <button type="button" className="cancel-button" onClick={closeForm}>キャンセル</button>
-                <button type="submit" className="primary-button" disabled={isSaving || !form.title.trim()}>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={isSaving || !form.title.trim()}
+                  aria-keyshortcuts="Control+Enter Meta+Enter"
+                  title="Ctrl＋Enterで保存"
+                >
                   {isSaving ? "保存中…" : editingId ? "変更を保存" : "ToDoを登録"}
                 </button>
               </footer>
