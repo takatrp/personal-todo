@@ -76,6 +76,15 @@ type Attachment = {
   data: Blob;
 };
 
+type SubTask = {
+  id: string;
+  title: string;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string;
+};
+
 type Task = {
   id: string;
   title: string;
@@ -95,6 +104,7 @@ type Task = {
   deletedAt: string;
   requester: string;
   assignee: string;
+  subTasks: SubTask[];
   attachments: Attachment[];
   createdAt: string;
   updatedAt: string;
@@ -139,6 +149,11 @@ type TouchDropTarget =
     }
   | { kind: "kanban"; targetStatus: TaskStatus };
 
+type DragOverTarget = {
+  key: string;
+  placeAfter: boolean;
+};
+
 type TodoTemplate = {
   id: string;
   name: string;
@@ -157,7 +172,7 @@ type BackupAttachment = Omit<Attachment, "data"> & { dataUrl: string };
 type BackupTask = Omit<Task, "attachments"> & { attachments: BackupAttachment[] };
 type BackupPayload = {
   format: "totonou-todo-backup";
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   dbVersion: 3;
   exportedAt: string;
   tasks: BackupTask[];
@@ -173,6 +188,7 @@ const TEMPLATE_STORE_NAME = "templates";
 const MAX_FILE_SIZE = 8 * 1024 * 1024;
 const MAX_TASK_ATTACHMENT_SIZE = 20 * 1024 * 1024;
 const MAX_BACKUP_FILE_SIZE = 150 * 1024 * 1024;
+const MAX_SUBTASKS = 100;
 const GANTT_DAYS = 14;
 
 const initialForm: TaskForm = {
@@ -255,6 +271,38 @@ function openDatabase(): Promise<IDBDatabase> {
   });
 }
 
+function normalizeSubTasks(value: unknown, taskId: string, fallbackCreatedAt: string) {
+  if (!Array.isArray(value)) return [];
+  const seenIds = new Set<string>();
+  return value.flatMap((rawSubTask, index): SubTask[] => {
+    if (!rawSubTask || typeof rawSubTask !== "object") return [];
+    const subTask = rawSubTask as Partial<SubTask>;
+    const title = typeof subTask.title === "string" ? subTask.title.trim().slice(0, 160) : "";
+    if (!title) return [];
+    const requestedId = typeof subTask.id === "string" && subTask.id ? subTask.id : `${taskId}-sub-${index}`;
+    const id = seenIds.has(requestedId) ? `${taskId}-sub-${index}` : requestedId;
+    seenIds.add(id);
+    return [{
+      id,
+      title,
+      sortOrder: Number.isFinite(subTask.sortOrder) ? subTask.sortOrder as number : index * 1000,
+      createdAt: typeof subTask.createdAt === "string" && subTask.createdAt ? subTask.createdAt : fallbackCreatedAt,
+      updatedAt: typeof subTask.updatedAt === "string" && subTask.updatedAt ? subTask.updatedAt : fallbackCreatedAt,
+      completedAt: typeof subTask.completedAt === "string" ? subTask.completedAt : "",
+    }];
+  }).slice(0, MAX_SUBTASKS);
+}
+
+function sortSubTasks(subTasks: SubTask[]) {
+  return [...subTasks].sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt.localeCompare(right.createdAt));
+}
+
+function subTaskProgress(task: Task) {
+  const total = task.subTasks.length;
+  const completed = task.subTasks.filter((subTask) => Boolean(subTask.completedAt)).length;
+  return { total, completed, percent: total > 0 ? Math.round((completed / total) * 100) : 0 };
+}
+
 function normalizeTask(task: Task): Task {
   return {
     ...task,
@@ -274,6 +322,7 @@ function normalizeTask(task: Task): Task {
     deletedAt: task.deletedAt ?? "",
     requester: task.requester ?? "",
     assignee: task.assignee ?? "",
+    subTasks: normalizeSubTasks(task.subTasks, task.id, task.createdAt ?? new Date(0).toISOString()),
     attachments: task.attachments ?? [],
     completedAt: task.completedAt ?? "",
   };
@@ -307,6 +356,7 @@ function buildDesignPreviewData() {
     deletedAt: "",
     requester: "",
     assignee: "",
+    subTasks: [],
     attachments: [],
     createdAt,
     updatedAt: createdAt,
@@ -323,6 +373,11 @@ function buildDesignPreviewData() {
       tags: ["共同"],
       tabId: "preview-shared",
       assignee: "山田 太郎",
+      subTasks: [
+        { id: "preview-monthly-sub-1", title: "試算表を出力する", sortOrder: 0, createdAt, updatedAt: createdAt, completedAt: createdAt },
+        { id: "preview-monthly-sub-2", title: "残高の増減を確認する", sortOrder: 1000, createdAt, updatedAt: createdAt, completedAt: createdAt },
+        { id: "preview-monthly-sub-3", title: "確認事項をメモする", sortOrder: 2000, createdAt, updatedAt: createdAt, completedAt: "" },
+      ],
     },
     {
       ...baseTask,
@@ -641,9 +696,10 @@ function advanceRecurringValue(value: string, recurrence: Recurrence) {
 function buildNextRecurringTask(task: Task, now: string): Task {
   const recurrenceSeriesId = task.recurrenceSeriesId || task.id;
   const recurrenceSequence = (task.recurrenceSequence || 0) + 1;
+  const id = `${recurrenceSeriesId}-r${recurrenceSequence}`;
   return {
     ...task,
-    id: `${recurrenceSeriesId}-r${recurrenceSequence}`,
+    id,
     status: "open",
     startAt: advanceRecurringValue(task.startAt, task.recurrence),
     dueAt: advanceRecurringValue(task.dueAt, task.recurrence),
@@ -653,6 +709,14 @@ function buildNextRecurringTask(task: Task, now: string): Task {
     recurrenceSeriesId,
     recurrenceSequence,
     deletedAt: "",
+    subTasks: sortSubTasks(task.subTasks).map((subTask, index) => ({
+      ...subTask,
+      id: `${id}-sub-${createId()}`,
+      sortOrder: index * 1000,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: "",
+    })),
     attachments: [],
     createdAt: now,
     updatedAt: now,
@@ -845,6 +909,7 @@ export function TodoApp() {
   const [timelineStart, setTimelineStart] = useState("");
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<DragOverTarget | null>(null);
   const [touchDropTargetKey, setTouchDropTargetKey] = useState("");
   const [pastingTaskId, setPastingTaskId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -862,6 +927,7 @@ export function TodoApp() {
   const [titleDraft, setTitleDraft] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(true);
+  const [subTaskDraft, setSubTaskDraft] = useState("");
   const [form, setForm] = useState<TaskForm>(initialForm);
   const [todayText, setTodayText] = useState("予定をひと目で整理");
   const [notice, setNotice] = useState("");
@@ -880,6 +946,7 @@ export function TodoApp() {
   const savingTitleIdRef = useRef<string | null>(null);
   const lastTitleClickRef = useRef<{ taskId: string; at: number } | null>(null);
   const touchDropTargetRef = useRef<TouchDropTarget | null>(null);
+  const dragPreviewRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const isDesignPreview = new URLSearchParams(window.location.search).get("design-preview") === "1";
@@ -1081,6 +1148,7 @@ export function TodoApp() {
         task.requester,
         task.assignee,
         task.tags.join(" "),
+        task.subTasks.map((subTask) => subTask.title).join(" "),
         tabNameById.get(task.tabId) ?? "",
       ]
         .join(" ")
@@ -1100,6 +1168,14 @@ export function TodoApp() {
     ? visibleTasks.find((task) => task.id === selectedTaskId) ?? visibleTasks[0] ?? null
     : null;
   const selectedTaskDeadline = selectedTask ? dueLabel(selectedTask) : null;
+  const selectedSubTaskProgress = selectedTask ? subTaskProgress(selectedTask) : null;
+  const draggingTab = draggingTabId ? tabs.find((tab) => tab.id === draggingTabId) : null;
+  const draggingTask = draggingTaskId ? tasks.find((task) => task.id === draggingTaskId) : null;
+  const dragStatus = draggingTab
+    ? { heading: "タブを移動中", label: draggingTab.name }
+    : draggingTask
+      ? { heading: "ToDoを移動中", label: draggingTask.title }
+      : null;
   const activeTaskCount = useMemo(() => tasks.filter((task) => !isDeleted(task)).length, [tasks]);
   const trashTaskCount = useMemo(() => tasks.filter(isDeleted).length, [tasks]);
   const totalAttachmentSize = useMemo(() => tasks.reduce(
@@ -1240,6 +1316,75 @@ export function TodoApp() {
     );
   }
 
+  function clearFloatingDragPreview() {
+    dragPreviewRef.current?.remove();
+    dragPreviewRef.current = null;
+  }
+
+  function setFloatingDragPreview(
+    event: DragEvent<HTMLElement>,
+    source: HTMLElement,
+    kind: "tab" | "task",
+  ) {
+    clearFloatingDragPreview();
+    const bounds = source.getBoundingClientRect();
+    const preview = source.cloneNode(true) as HTMLElement;
+    preview.classList.remove(
+      "dragging",
+      "selected",
+      "touch-drop-target",
+      "drag-over-target",
+      "drag-over-before",
+      "drag-over-after",
+    );
+    preview.classList.add("todo-drag-preview", `todo-drag-preview-${kind}`);
+    preview.setAttribute("aria-hidden", "true");
+    const previewWidth = kind === "task" ? Math.min(bounds.width, 560) : bounds.width;
+    preview.style.width = `${previewWidth}px`;
+    preview.style.height = `${bounds.height}px`;
+    preview.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
+    preview.querySelectorAll<HTMLElement>("button, input, select, textarea, a").forEach((element) => {
+      element.tabIndex = -1;
+    });
+    document.body.appendChild(preview);
+    const rawOffsetX = event.clientX > 0 ? event.clientX - bounds.left : bounds.width / 2;
+    const rawOffsetY = event.clientY > 0 ? event.clientY - bounds.top : Math.min(28, bounds.height / 2);
+    const offsetX = Math.max(12, Math.min(previewWidth - 12, rawOffsetX));
+    const offsetY = Math.max(12, Math.min(bounds.height - 12, rawOffsetY));
+    event.dataTransfer.setDragImage(preview, offsetX, offsetY);
+    dragPreviewRef.current = preview;
+  }
+
+  function updateDragOverTarget(key: string, placeAfter: boolean) {
+    setDragOverTarget((current) =>
+      current?.key === key && current.placeAfter === placeAfter
+        ? current
+        : { key, placeAfter },
+    );
+  }
+
+  function clearDragOverTarget(key?: string) {
+    setDragOverTarget((current) => !key || current?.key === key ? null : current);
+  }
+
+  function handleDragTargetLeave(event: DragEvent<HTMLElement>, key: string) {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+    clearDragOverTarget(key);
+  }
+
+  function dragTargetClass(key: string) {
+    if (dragOverTarget?.key !== key) return "";
+    return ` drag-over-target ${dragOverTarget.placeAfter ? "drag-over-after" : "drag-over-before"}`;
+  }
+
+  function clearPointerDragState() {
+    setDraggingTabId(null);
+    setDraggingTaskId(null);
+    setDragOverTarget(null);
+    clearFloatingDragPreview();
+  }
+
   async function reorderTabs(sourceId: string, targetId: string, placeAfter: boolean) {
     if (sourceId === targetId) return;
     const previousTabs = tabs;
@@ -1269,7 +1414,7 @@ export function TodoApp() {
     const sourceId = draggingTabId || event.dataTransfer.getData("application/x-todo-tab");
     const bounds = event.currentTarget.getBoundingClientRect();
     const placeAfter = event.clientX > bounds.left + bounds.width / 2;
-    setDraggingTabId(null);
+    clearPointerDragState();
     if (sourceId) void reorderTabs(sourceId, targetId, placeAfter);
   }
 
@@ -1281,8 +1426,10 @@ export function TodoApp() {
   function clearTouchDragState() {
     touchDropTargetRef.current = null;
     setTouchDropTargetKey("");
+    setDragOverTarget(null);
     setDraggingTabId(null);
     setDraggingTaskId(null);
+    clearFloatingDragPreview();
   }
 
   function handleTabTouchStart(event: TouchEvent<HTMLButtonElement>, sourceId: string) {
@@ -1496,6 +1643,7 @@ export function TodoApp() {
       deletedAt: previousTask?.deletedAt ?? "",
       requester: form.requester.trim(),
       assignee: form.assignee.trim(),
+      subTasks: previousTask?.subTasks ?? [],
       attachments: form.attachments,
       createdAt: previousTask?.createdAt ?? now,
       updatedAt: now,
@@ -1634,11 +1782,75 @@ export function TodoApp() {
     await moveTaskStatus(task, task.status === "done" ? "open" : "done");
   }
 
+  async function saveSubTasks(task: Task, subTasks: SubTask[], successMessage: string) {
+    const previousTask = tasks.find((item) => item.id === task.id) ?? task;
+    const updatedTask: Task = {
+      ...previousTask,
+      subTasks: sortSubTasks(subTasks),
+      updatedAt: new Date().toISOString(),
+    };
+    setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? updatedTask : item)));
+    try {
+      await writeTask(updatedTask);
+      setNotice(successMessage);
+      return true;
+    } catch {
+      setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? previousTask : item)));
+      setStorageError(true);
+      setNotice("子ToDoを保存できませんでした");
+      return false;
+    }
+  }
+
+  async function addSubTask(task: Task) {
+    const title = subTaskDraft.trim();
+    if (!title) return;
+    if (task.subTasks.length >= MAX_SUBTASKS) {
+      setNotice(`子ToDoは1つのToDoにつき${MAX_SUBTASKS}件までです`);
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextSortOrder = task.subTasks.length > 0
+      ? Math.max(...task.subTasks.map((subTask) => subTask.sortOrder)) + 1000
+      : 0;
+    const nextSubTask: SubTask = {
+      id: createId(),
+      title,
+      sortOrder: nextSortOrder,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: "",
+    };
+    setSubTaskDraft("");
+    const saved = await saveSubTasks(task, [...task.subTasks, nextSubTask], "子ToDoを追加しました");
+    if (!saved) setSubTaskDraft(title);
+  }
+
+  async function toggleSubTask(task: Task, subTask: SubTask) {
+    const now = new Date().toISOString();
+    const nextCompletedAt = subTask.completedAt ? "" : now;
+    await saveSubTasks(task, task.subTasks.map((item) => item.id === subTask.id
+      ? { ...item, completedAt: nextCompletedAt, updatedAt: now }
+      : item), nextCompletedAt ? "子ToDoを完了しました" : "子ToDoを未完了に戻しました");
+  }
+
+  async function deleteSubTask(task: Task, subTask: SubTask) {
+    if (!window.confirm(`子ToDo「${subTask.title}」を削除しますか？`)) return;
+    await saveSubTasks(
+      task,
+      task.subTasks.filter((item) => item.id !== subTask.id),
+      "子ToDoを削除しました",
+    );
+  }
+
   function handleTaskDragStart(event: DragEvent<HTMLElement>, task: Task) {
     if (editingTitleId === task.id) {
       event.preventDefault();
       return;
     }
+    const card = event.currentTarget.closest<HTMLElement>("[data-todo-task-id]");
+    if (card) setFloatingDragPreview(event, card, "task");
+    setDragOverTarget(null);
     setDraggingTaskId(task.id);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("application/x-todo-task", task.id);
@@ -1727,7 +1939,7 @@ export function TodoApp() {
     const task = draggedTaskFromEvent(event);
     const bounds = event.currentTarget.getBoundingClientRect();
     const placeAfter = event.clientY > bounds.top + bounds.height / 2;
-    setDraggingTaskId(null);
+    clearPointerDragState();
     if (task && task.id !== targetTask.id) {
       void moveTaskStatus(
         task,
@@ -1741,7 +1953,7 @@ export function TodoApp() {
   function handleKanbanDrop(event: DragEvent<HTMLDivElement>, status: TaskStatus) {
     event.preventDefault();
     const task = draggedTaskFromEvent(event);
-    setDraggingTaskId(null);
+    clearPointerDragState();
     if (task) void moveTaskStatus(task, status, undefined, false, true);
   }
 
@@ -1980,7 +2192,7 @@ export function TodoApp() {
       }));
       const payload: BackupPayload = {
         format: "totonou-todo-backup",
-        formatVersion: 1,
+        formatVersion: 2,
         dbVersion: DB_VERSION,
         exportedAt: new Date().toISOString(),
         tasks: backupTasks,
@@ -2013,7 +2225,7 @@ export function TodoApp() {
       const parsed = JSON.parse(await file.text()) as Partial<BackupPayload>;
       if (
         parsed.format !== "totonou-todo-backup" ||
-        parsed.formatVersion !== 1 ||
+        (parsed.formatVersion !== 1 && parsed.formatVersion !== 2) ||
         !Array.isArray(parsed.tasks) ||
         !Array.isArray(parsed.tabs) ||
         !Array.isArray(parsed.templates)
@@ -2037,6 +2249,27 @@ export function TodoApp() {
       const restoredTasks = await Promise.all((parsed.tasks as BackupTask[]).map(async (rawTask) => {
         if (!rawTask.id || !rawTask.title || !Array.isArray(rawTask.attachments)) {
           throw new Error("バックアップ内のToDo情報が不正です");
+        }
+        const rawSubTasks = (rawTask as Partial<BackupTask>).subTasks;
+        if (parsed.formatVersion === 2 && !Array.isArray(rawSubTasks)) {
+          throw new Error("バックアップ内の子ToDo情報が不正です");
+        }
+        if (rawSubTasks !== undefined) {
+          if (!Array.isArray(rawSubTasks) || rawSubTasks.length > MAX_SUBTASKS) {
+            throw new Error("バックアップ内の子ToDo情報が不正です");
+          }
+          const childIds = new Set<string>();
+          for (const rawSubTask of rawSubTasks) {
+            if (!rawSubTask || typeof rawSubTask !== "object") {
+              throw new Error("バックアップ内の子ToDo情報が不正です");
+            }
+            const subTask = rawSubTask as Partial<SubTask>;
+            if (typeof subTask.id !== "string" || !subTask.id || typeof subTask.title !== "string" || !subTask.title.trim()) {
+              throw new Error("バックアップ内の子ToDo情報が不正です");
+            }
+            if (childIds.has(subTask.id)) throw new Error("バックアップ内の子ToDo IDが重複しています");
+            childIds.add(subTask.id);
+          }
         }
         if (rawTask.attachments.length > 10) throw new Error("添付ファイル数が上限を超えています");
         const attachments = await Promise.all(rawTask.attachments.map(async (rawAttachment) => {
@@ -2154,7 +2387,7 @@ export function TodoApp() {
     : `${sectionTitle}はありません`;
 
   return (
-    <div className="app-shell">
+    <div className={dragStatus ? "app-shell is-dragging" : "app-shell"}>
       <aside className="sidebar" aria-label="ToDoの表示切替">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">と</span>
@@ -2270,15 +2503,19 @@ export function TodoApp() {
               <span className="tabs-empty-hint">タブを追加すると、仕事ごとに切り替えられます</span>
             ) : tabs.map((tab) => {
               const tabCount = tasks.filter((task) => task.tabId === tab.id && !isDeleted(task)).length;
+              const tabDragKey = `tab:${tab.id}`;
               return (
                 <div
-                  className={`custom-tab-shell${activeTabId === tab.id ? " selected" : ""}${draggingTabId === tab.id ? " dragging" : ""}${touchDropTargetKey === `tab:${tab.id}` ? " touch-drop-target" : ""}`}
+                  className={`custom-tab-shell${activeTabId === tab.id ? " selected" : ""}${draggingTabId === tab.id ? " dragging" : ""}${touchDropTargetKey === tabDragKey ? " touch-drop-target" : ""}${dragTargetClass(tabDragKey)}`}
                   key={tab.id}
                   data-todo-tab-id={tab.id}
                   onDragOver={(event) => {
                     event.preventDefault();
                     event.dataTransfer.dropEffect = "move";
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    updateDragOverTarget(tabDragKey, event.clientX > bounds.left + bounds.width / 2);
                   }}
+                  onDragLeave={(event) => handleDragTargetLeave(event, tabDragKey)}
                   onDrop={(event) => handleTabDrop(event, tab.id)}
                 >
                   <button
@@ -2288,11 +2525,14 @@ export function TodoApp() {
                     aria-label={`${tab.name}をドラッグして並び替え`}
                     title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋左右キーにも対応）"
                     onDragStart={(event) => {
+                      const shell = event.currentTarget.closest<HTMLElement>("[data-todo-tab-id]");
+                      if (shell) setFloatingDragPreview(event, shell, "tab");
+                      setDragOverTarget(null);
                       setDraggingTabId(tab.id);
                       event.dataTransfer.effectAllowed = "move";
                       event.dataTransfer.setData("application/x-todo-tab", tab.id);
                     }}
-                    onDragEnd={() => setDraggingTabId(null)}
+                    onDragEnd={clearPointerDragState}
                     onKeyDown={(event) => handleTabHandleKeyDown(event, tab)}
                     onTouchStart={(event) => handleTabTouchStart(event, tab.id)}
                     onTouchMove={handleTabTouchMove}
@@ -2382,15 +2622,18 @@ export function TodoApp() {
               <div className="kanban-board" aria-label="かんばんボード">
                 {(Object.keys(statusLabels) as TaskStatus[]).map((status) => {
                   const columnTasks = visibleTasks.filter((task) => task.status === status);
+                  const kanbanDragKey = `kanban:${status}`;
                   return (
                     <div
-                      className={`kanban-column kanban-${status}${touchDropTargetKey === `kanban:${status}` ? " touch-drop-target" : ""}`}
+                      className={`kanban-column kanban-${status}${touchDropTargetKey === kanbanDragKey ? " touch-drop-target" : ""}${dragOverTarget?.key === kanbanDragKey ? " drag-over-target" : ""}`}
                       key={status}
                       data-kanban-status={status}
                       onDragOver={(event) => {
                         event.preventDefault();
                         event.dataTransfer.dropEffect = "move";
+                        updateDragOverTarget(kanbanDragKey, true);
                       }}
+                      onDragLeave={(event) => handleDragTargetLeave(event, kanbanDragKey)}
                       onDrop={(event) => handleKanbanDrop(event, status)}
                     >
                       <header className="kanban-column-header">
@@ -2401,9 +2644,11 @@ export function TodoApp() {
                       <div className="kanban-cards">
                         {columnTasks.map((task) => {
                           const deadline = dueLabel(task);
+                          const progress = subTaskProgress(task);
+                          const taskDragKey = `task:${task.id}`;
                           return (
                             <article
-                              className={`kanban-card${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}${touchDropTargetKey === `task:${task.id}` ? " touch-drop-target" : ""}`}
+                              className={`kanban-card${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}${touchDropTargetKey === taskDragKey ? " touch-drop-target" : ""}${dragTargetClass(taskDragKey)}`}
                               key={task.id}
                               tabIndex={0}
                               data-todo-task-id={task.id}
@@ -2412,8 +2657,12 @@ export function TodoApp() {
                               onPaste={(event) => void handleCardPaste(event, task)}
                               onDragOver={(event) => {
                                 event.preventDefault();
+                                event.stopPropagation();
                                 event.dataTransfer.dropEffect = "move";
+                                const bounds = event.currentTarget.getBoundingClientRect();
+                                updateDragOverTarget(taskDragKey, event.clientY > bounds.top + bounds.height / 2);
                               }}
+                              onDragLeave={(event) => handleDragTargetLeave(event, taskDragKey)}
                               onDrop={(event) => handleTaskCardDrop(event, task, false)}
                             >
                               <div className="kanban-title-row">
@@ -2424,7 +2673,7 @@ export function TodoApp() {
                                   aria-label={`${task.title}をドラッグして並び替え`}
                                   title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋上下キーにも対応）"
                                   onDragStart={(event) => handleTaskDragStart(event, task)}
-                                  onDragEnd={() => setDraggingTaskId(null)}
+                                  onDragEnd={clearPointerDragState}
                                   onKeyDown={(event) => handleTaskHandleKeyDown(event, task, columnTasks)}
                                   onTouchStart={(event) => handleTaskTouchStart(event, task)}
                                   onTouchMove={handleTaskTouchMove}
@@ -2449,6 +2698,14 @@ export function TodoApp() {
                               <button className="kanban-detail-edit" type="button" onClick={() => openEditForm(task)}>
                                 詳細を編集
                               </button>
+                              {progress.total > 0 && (
+                                <div className="kanban-subtask-progress" aria-label={`子ToDo ${progress.completed}/${progress.total} 完了`}>
+                                  <span><CheckCircle size={14} /> 子ToDo {progress.completed}/{progress.total}</span>
+                                  <span className="subtask-progress-track" aria-hidden="true">
+                                    <span style={{ width: `${progress.percent}%` }} />
+                                  </span>
+                                </div>
+                              )}
                               {task.tags.length > 0 && (
                                 <div className="tag-row">
                                   {task.tags.slice(0, 3).map((tag) => <span className="tag" key={tag}>#{tag}</span>)}
@@ -2623,9 +2880,11 @@ export function TodoApp() {
               <div className="task-list">
               {visibleTasks.map((task) => {
                 const deadline = dueLabel(task);
+                const progress = subTaskProgress(task);
+                const taskDragKey = `task:${task.id}`;
                 return (
                   <article
-                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${deadline.tone === "danger" ? " overdue-row" : ""}${selectedTask?.id === task.id && isDetailPanelOpen ? " selected" : ""}${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}${touchDropTargetKey === `task:${task.id}` ? " touch-drop-target" : ""}`}
+                    className={`${activeView === "trash" ? "task-card trashed" : isComplete(task) ? "task-card completed" : "task-card"}${deadline.tone === "danger" ? " overdue-row" : ""}${selectedTask?.id === task.id && isDetailPanelOpen ? " selected" : ""}${draggingTaskId === task.id ? " dragging" : ""}${pastingTaskId === task.id ? " pasting" : ""}${touchDropTargetKey === taskDragKey ? " touch-drop-target" : ""}${dragTargetClass(taskDragKey)}`}
                     key={task.id}
                     tabIndex={0}
                     aria-label={`${task.title}の詳細を表示`}
@@ -2636,7 +2895,10 @@ export function TodoApp() {
                     onDragOver={activeView !== "trash" ? (event) => {
                       event.preventDefault();
                       event.dataTransfer.dropEffect = "move";
+                      const bounds = event.currentTarget.getBoundingClientRect();
+                      updateDragOverTarget(taskDragKey, event.clientY > bounds.top + bounds.height / 2);
                     } : undefined}
+                    onDragLeave={activeView !== "trash" ? (event) => handleDragTargetLeave(event, taskDragKey) : undefined}
                     onDrop={activeView !== "trash" ? (event) => handleTaskCardDrop(event, task, true) : undefined}
                     onClick={() => {
                       if (activeView === "trash") return;
@@ -2672,7 +2934,7 @@ export function TodoApp() {
                         aria-label={`${task.title}をドラッグして並び替え`}
                         title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋上下キーにも対応）"
                         onDragStart={(event) => handleTaskDragStart(event, task)}
-                        onDragEnd={() => setDraggingTaskId(null)}
+                        onDragEnd={clearPointerDragState}
                         onKeyDown={(event) => handleTaskHandleKeyDown(event, task, visibleTasks)}
                         onTouchStart={(event) => handleTaskTouchStart(event, task)}
                         onTouchMove={handleTaskTouchMove}
@@ -2704,6 +2966,11 @@ export function TodoApp() {
                           <span className="task-tab-badge">{tabNameById.get(task.tabId)}</span>
                         )}
                         {task.attachments.length > 0 && <span className="attachment-count"><Paperclip size={13} /> {task.attachments.length}</span>}
+                        {progress.total > 0 && (
+                          <span className="subtask-progress-badge" aria-label={`子ToDo ${progress.completed}/${progress.total} 完了`}>
+                            <CheckCircle size={13} /> {progress.completed}/{progress.total}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -2766,6 +3033,72 @@ export function TodoApp() {
                   ))}
                 </select>
               </label>
+
+              <section className="detail-section detail-subtasks" aria-labelledby="subtask-section-title">
+                <div className="subtask-heading-row">
+                  <div className="detail-section-label" id="subtask-section-title">
+                    <CheckCircle size={18} /><span>子ToDo</span>
+                  </div>
+                  <strong>{selectedSubTaskProgress?.completed ?? 0} / {selectedSubTaskProgress?.total ?? 0} 完了</strong>
+                </div>
+                <div
+                  className="subtask-progress-track detail-subtask-progress"
+                  role="progressbar"
+                  aria-label="子ToDoの進捗"
+                  aria-valuemin={0}
+                  aria-valuemax={Math.max(selectedSubTaskProgress?.total ?? 0, 1)}
+                  aria-valuenow={selectedSubTaskProgress?.completed ?? 0}
+                  aria-valuetext={`${selectedSubTaskProgress?.completed ?? 0} / ${selectedSubTaskProgress?.total ?? 0} 完了`}
+                >
+                  <span style={{ width: `${selectedSubTaskProgress?.percent ?? 0}%` }} />
+                </div>
+                <form
+                  className="subtask-add-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void addSubTask(selectedTask);
+                  }}
+                >
+                  <input
+                    type="text"
+                    value={subTaskDraft}
+                    maxLength={160}
+                    onChange={(event) => setSubTaskDraft(event.target.value)}
+                    placeholder="例：資料を確認する"
+                    aria-label="新しい子ToDo"
+                  />
+                  <button type="submit" disabled={!subTaskDraft.trim()}><Plus size={15} /> 追加</button>
+                </form>
+                {selectedTask.subTasks.length > 0 ? (
+                  <div className="subtask-list">
+                    {sortSubTasks(selectedTask.subTasks).map((subTask) => (
+                      <div className={`subtask-item${subTask.completedAt ? " completed" : ""}`} key={subTask.id}>
+                        <button
+                          type="button"
+                          className="subtask-toggle"
+                          onClick={() => void toggleSubTask(selectedTask, subTask)}
+                          aria-label={`${subTask.title}を${subTask.completedAt ? "未完了に戻す" : "完了する"}`}
+                          aria-pressed={Boolean(subTask.completedAt)}
+                        >
+                          <CheckCircle size={19} weight={subTask.completedAt ? "fill" : "regular"} />
+                        </button>
+                        <span>{subTask.title}</span>
+                        <button
+                          type="button"
+                          className="subtask-delete"
+                          onClick={() => void deleteSubTask(selectedTask, subTask)}
+                          aria-label={`${subTask.title}を削除`}
+                          title="子ToDoを削除"
+                        >
+                          <Trash size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="detail-empty subtask-empty">作業を小さく分けると、ここに進捗が表示されます。</p>
+                )}
+              </section>
 
               <section className="detail-section">
                 <div className="detail-section-label"><Tag size={18} /><span>タグ</span></div>
@@ -3325,6 +3658,16 @@ export function TodoApp() {
               <button type="button" className="primary-button" onClick={closeImagePreview}>閉じる</button>
             </footer>
           </section>
+        </div>
+      )}
+
+      {dragStatus && (
+        <div className="drag-status" role="status" aria-live="polite">
+          <span className="drag-status-icon" aria-hidden="true"><DotsSixVertical size={20} weight="bold" /></span>
+          <span>
+            <strong>{dragStatus.heading}</strong>
+            <small>{dragStatus.label}・移動先で離してください</small>
+          </span>
         </div>
       )}
 
