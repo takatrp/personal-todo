@@ -4807,6 +4807,157 @@ body {
   line-height: 1.6;
 }
 
+.form-subtasks {
+  display: grid;
+  gap: 11px;
+  padding: 15px;
+  border: 1px solid #deddec;
+  border-radius: 13px;
+  background: #faf9ff;
+}
+
+.form-subtasks-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.form-subtasks-header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.form-subtasks-header span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #444553;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.form-subtasks-header small {
+  color: var(--faint);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.form-subtasks-header strong {
+  color: #5152b7;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.form-subtask-progress {
+  height: 7px;
+}
+
+.form-subtask-list {
+  display: grid;
+  gap: 7px;
+}
+
+.form-subtask-row {
+  display: grid;
+  min-height: 42px;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px;
+  border: 1px solid #e2e0dc;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.form-subtask-row input,
+.form-subtask-add input {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid #dad8d3;
+  border-radius: 8px;
+  outline: 0;
+  color: var(--ink);
+  background: #fff;
+  font-size: 11px;
+}
+
+.form-subtask-row input:focus,
+.form-subtask-add input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(93, 94, 228, 0.1);
+}
+
+.form-subtask-row.completed input {
+  color: #8c909a;
+  background: #f7f7f5;
+  text-decoration: line-through;
+}
+
+.form-subtask-toggle,
+.form-subtask-delete {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.form-subtask-toggle {
+  color: #9296a2;
+}
+
+.form-subtask-row.completed .form-subtask-toggle {
+  color: var(--primary);
+}
+
+.form-subtask-delete {
+  color: #a0a3ab;
+}
+
+.form-subtask-toggle:hover,
+.form-subtask-delete:hover {
+  background: #f0efec;
+}
+
+.form-subtask-delete:hover {
+  color: #bd5c61;
+}
+
+.form-subtask-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.form-subtask-add button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 13px;
+  border: 1px solid var(--primary);
+  border-radius: 9px;
+  color: #fff;
+  background: var(--primary);
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.form-subtask-add button:disabled {
+  border-color: #dcdbd7;
+  color: #999ba3;
+  background: #efeeeb;
+  cursor: default;
+}
+
 @media (max-width: 620px) {
   .subtask-delete {
     opacity: 1;
@@ -4814,8 +4965,20 @@ body {
 
   .subtask-add-form input,
   .subtask-add-form button,
-  .subtask-item {
+  .subtask-item,
+  .form-subtask-row,
+  .form-subtask-row input,
+  .form-subtask-add input,
+  .form-subtask-add button {
     min-height: 44px;
+  }
+
+  .form-subtasks {
+    padding: 13px;
+  }
+
+  .form-subtasks-header {
+    align-items: flex-start;
   }
 }
 

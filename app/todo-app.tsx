@@ -127,6 +127,7 @@ type TaskForm = {
   recurrence: Recurrence;
   requester: string;
   assignee: string;
+  subTasks: SubTask[];
   attachments: Attachment[];
 };
 
@@ -207,6 +208,7 @@ const initialForm: TaskForm = {
   recurrence: "none",
   requester: "",
   assignee: "",
+  subTasks: [],
   attachments: [],
 };
 
@@ -297,10 +299,14 @@ function sortSubTasks(subTasks: SubTask[]) {
   return [...subTasks].sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt.localeCompare(right.createdAt));
 }
 
-function subTaskProgress(task: Task) {
-  const total = task.subTasks.length;
-  const completed = task.subTasks.filter((subTask) => Boolean(subTask.completedAt)).length;
+function calculateSubTaskProgress(subTasks: SubTask[]) {
+  const total = subTasks.length;
+  const completed = subTasks.filter((subTask) => Boolean(subTask.completedAt)).length;
   return { total, completed, percent: total > 0 ? Math.round((completed / total) * 100) : 0 };
+}
+
+function subTaskProgress(task: Task) {
+  return calculateSubTaskProgress(task.subTasks);
 }
 
 function normalizeTask(task: Task): Task {
@@ -928,6 +934,7 @@ export function TodoApp() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(true);
   const [subTaskDraft, setSubTaskDraft] = useState("");
+  const [formSubTaskDraft, setFormSubTaskDraft] = useState("");
   const [form, setForm] = useState<TaskForm>(initialForm);
   const [todayText, setTodayText] = useState("予定をひと目で整理");
   const [notice, setNotice] = useState("");
@@ -1169,6 +1176,7 @@ export function TodoApp() {
     : null;
   const selectedTaskDeadline = selectedTask ? dueLabel(selectedTask) : null;
   const selectedSubTaskProgress = selectedTask ? subTaskProgress(selectedTask) : null;
+  const formSubTaskProgress = calculateSubTaskProgress(form.subTasks);
   const draggingTab = draggingTabId ? tabs.find((tab) => tab.id === draggingTabId) : null;
   const draggingTask = draggingTaskId ? tasks.find((task) => task.id === draggingTaskId) : null;
   const dragStatus = draggingTab
@@ -1561,12 +1569,14 @@ export function TodoApp() {
 
   function openCreateForm() {
     setEditingId(null);
+    setFormSubTaskDraft("");
     setForm({ ...initialForm, tabId: activeTabId === "all" ? "" : activeTabId });
     setIsFormOpen(true);
   }
 
   function openCreateForStatus(status: TaskStatus) {
     setEditingId(null);
+    setFormSubTaskDraft("");
     setForm({
       ...initialForm,
       status,
@@ -1579,6 +1589,7 @@ export function TodoApp() {
     const start = toDateFormValue(task.startAt, "09:00");
     const due = toDateFormValue(task.dueAt, "17:00");
     setEditingId(task.id);
+    setFormSubTaskDraft("");
     setForm({
       title: task.title,
       description: task.description,
@@ -1595,6 +1606,7 @@ export function TodoApp() {
       recurrence: task.recurrence,
       requester: task.requester,
       assignee: task.assignee,
+      subTasks: sortSubTasks(task.subTasks).map((subTask) => ({ ...subTask })),
       attachments: task.attachments,
     });
     setIsFormOpen(true);
@@ -1603,6 +1615,46 @@ export function TodoApp() {
   function closeForm() {
     if (isSaving) return;
     setIsFormOpen(false);
+    setFormSubTaskDraft("");
+  }
+
+  function addFormSubTask() {
+    const title = formSubTaskDraft.trim();
+    if (!title) return;
+    if (form.subTasks.length >= MAX_SUBTASKS) {
+      setNotice(`子ToDoは1つのToDoにつき${MAX_SUBTASKS}件までです`);
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextSortOrder = form.subTasks.length > 0
+      ? Math.max(...form.subTasks.map((subTask) => subTask.sortOrder)) + 1000
+      : 0;
+    setForm((current) => ({
+      ...current,
+      subTasks: [...current.subTasks, {
+        id: createId(),
+        title,
+        sortOrder: nextSortOrder,
+        createdAt: now,
+        updatedAt: now,
+        completedAt: "",
+      }],
+    }));
+    setFormSubTaskDraft("");
+  }
+
+  function updateFormSubTask(id: string, update: (subTask: SubTask) => SubTask) {
+    setForm((current) => ({
+      ...current,
+      subTasks: current.subTasks.map((subTask) => subTask.id === id ? update(subTask) : subTask),
+    }));
+  }
+
+  function removeFormSubTask(id: string) {
+    setForm((current) => ({
+      ...current,
+      subTasks: current.subTasks.filter((subTask) => subTask.id !== id),
+    }));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1610,6 +1662,10 @@ export function TodoApp() {
     const title = form.title.trim();
     if (!title) {
       titleInputRef.current?.focus();
+      return;
+    }
+    if (form.subTasks.some((subTask) => !subTask.title.trim())) {
+      setNotice("子ToDoの名前を入力してください");
       return;
     }
     const previousTask = editingId ? tasks.find((task) => task.id === editingId) : undefined;
@@ -1624,6 +1680,23 @@ export function TodoApp() {
     const nextStatus = form.status;
     const taskId = previousTask?.id ?? createId();
     const reminderAt = form.reminderAt ? new Date(form.reminderAt).toISOString() : "";
+    const nextSubTasks = sortSubTasks(form.subTasks).map((subTask, index) => {
+      const previousSubTask = previousTask?.subTasks.find((item) => item.id === subTask.id);
+      const normalizedSubTask = {
+        ...subTask,
+        title: subTask.title.trim(),
+        sortOrder: index * 1000,
+        createdAt: subTask.createdAt || now,
+      };
+      const changed = !previousSubTask ||
+        previousSubTask.title !== normalizedSubTask.title ||
+        previousSubTask.completedAt !== normalizedSubTask.completedAt ||
+        previousSubTask.sortOrder !== normalizedSubTask.sortOrder;
+      return {
+        ...normalizedSubTask,
+        updatedAt: changed ? now : normalizedSubTask.updatedAt || now,
+      };
+    });
     let task: Task = {
       id: taskId,
       title,
@@ -1643,7 +1716,7 @@ export function TodoApp() {
       deletedAt: previousTask?.deletedAt ?? "",
       requester: form.requester.trim(),
       assignee: form.assignee.trim(),
-      subTasks: previousTask?.subTasks ?? [],
+      subTasks: nextSubTasks,
       attachments: form.attachments,
       createdAt: previousTask?.createdAt ?? now,
       updatedAt: now,
@@ -3232,6 +3305,96 @@ export function TodoApp() {
                     placeholder="確認事項や手順を記録できます"
                   />
                 </label>
+
+                {editingId && (
+                  <section className="form-subtasks" aria-labelledby="form-subtasks-title">
+                    <div className="form-subtasks-header">
+                      <div>
+                        <span id="form-subtasks-title"><CheckCircle size={18} /> 子ToDo</span>
+                        <small>作業名の変更・完了切替・削除も、最後にまとめて保存されます。</small>
+                      </div>
+                      <strong>{formSubTaskProgress.completed} / {formSubTaskProgress.total} 完了</strong>
+                    </div>
+                    <div
+                      className="subtask-progress-track form-subtask-progress"
+                      role="progressbar"
+                      aria-label="編集中の子ToDo進捗"
+                      aria-valuemin={0}
+                      aria-valuemax={Math.max(formSubTaskProgress.total, 1)}
+                      aria-valuenow={formSubTaskProgress.completed}
+                      aria-valuetext={`${formSubTaskProgress.completed} / ${formSubTaskProgress.total} 完了`}
+                    >
+                      <span style={{ width: `${formSubTaskProgress.percent}%` }} />
+                    </div>
+
+                    {form.subTasks.length > 0 && (
+                      <div className="form-subtask-list">
+                        {sortSubTasks(form.subTasks).map((subTask) => (
+                          <div className={`form-subtask-row${subTask.completedAt ? " completed" : ""}`} key={subTask.id}>
+                            <button
+                              type="button"
+                              className="form-subtask-toggle"
+                              onClick={() => updateFormSubTask(subTask.id, (current) => ({
+                                ...current,
+                                completedAt: current.completedAt ? "" : new Date().toISOString(),
+                              }))}
+                              aria-label={`${subTask.title}を${subTask.completedAt ? "未完了に戻す" : "完了する"}`}
+                              aria-pressed={Boolean(subTask.completedAt)}
+                            >
+                              <CheckCircle size={20} weight={subTask.completedAt ? "fill" : "regular"} />
+                            </button>
+                            <input
+                              type="text"
+                              required
+                              maxLength={160}
+                              value={subTask.title}
+                              onChange={(event) => updateFormSubTask(subTask.id, (current) => ({
+                                ...current,
+                                title: event.target.value,
+                              }))}
+                              aria-label={`${subTask.title || "子ToDo"}の名前`}
+                            />
+                            <button
+                              type="button"
+                              className="form-subtask-delete"
+                              onClick={() => removeFormSubTask(subTask.id)}
+                              aria-label={`${subTask.title || "子ToDo"}を削除`}
+                              title="子ToDoを削除"
+                            >
+                              <Trash size={16} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="form-subtask-add">
+                      <input
+                        type="text"
+                        value={formSubTaskDraft}
+                        maxLength={160}
+                        onChange={(event) => setFormSubTaskDraft(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (event.ctrlKey || event.metaKey) {
+                            const taskForm = event.currentTarget.form;
+                            if (formSubTaskDraft.trim()) addFormSubTask();
+                            window.setTimeout(() => taskForm?.requestSubmit(), 0);
+                            return;
+                          }
+                          addFormSubTask();
+                        }}
+                        placeholder="新しい子ToDoを入力"
+                        aria-label="編集画面で新しい子ToDoを追加"
+                      />
+                      <button type="button" onClick={addFormSubTask} disabled={!formSubTaskDraft.trim()}>
+                        <Plus size={16} /> 追加
+                      </button>
+                    </div>
+                  </section>
+                )}
 
                 <div className="form-grid">
                   <div className="form-field date-time-field">

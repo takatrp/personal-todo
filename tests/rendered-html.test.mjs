@@ -107,6 +107,11 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /function addSubTask/);
   assert.match(app, /function toggleSubTask/);
   assert.match(app, /function deleteSubTask/);
+  assert.match(app, /function addFormSubTask/);
+  assert.match(app, /function updateFormSubTask/);
+  assert.match(app, /subTasks: sortSubTasks\(task\.subTasks\)/);
+  assert.match(app, /編集中の子ToDo進捗/);
+  assert.match(app, /作業名の変更・完了切替・削除も、最後にまとめて保存されます/);
   assert.match(app, /子ToDo/);
   assert.match(app, /formatVersion: 2/);
   assert.match(app, /parsed\.formatVersion !== 1 && parsed\.formatVersion !== 2/);
@@ -149,6 +154,9 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.subtask-progress-badge/);
   assert.match(css, /\.detail-subtask-progress/);
   assert.match(css, /\.subtask-item/);
+  assert.match(css, /\.form-subtasks/);
+  assert.match(css, /\.form-subtask-row/);
+  assert.match(css, /\.form-subtask-add/);
   assert.match(css, /touch-action: none/);
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 620px\)/);
