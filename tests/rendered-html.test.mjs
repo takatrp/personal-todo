@@ -111,7 +111,9 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /function updateFormSubTask/);
   assert.match(app, /subTasks: sortSubTasks\(task\.subTasks\)/);
   assert.match(app, /編集中の子ToDo進捗/);
-  assert.match(app, /作業名の変更・完了切替・削除も、最後にまとめて保存されます/);
+  assert.match(app, /子ToDoの追加・変更も、ToDoと一緒にまとめて保存されます/);
+  assert.match(app, /aria-label="ToDo作成・編集画面で新しい子ToDoを追加"/);
+  assert.doesNotMatch(app, /\{editingId && \(\s*<section className="form-subtasks"/);
   assert.match(app, /子ToDo/);
   assert.match(app, /formatVersion: 2/);
   assert.match(app, /parsed\.formatVersion !== 1 && parsed\.formatVersion !== 2/);

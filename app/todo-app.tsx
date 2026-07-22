@@ -3306,12 +3306,11 @@ export function TodoApp() {
                   />
                 </label>
 
-                {editingId && (
-                  <section className="form-subtasks" aria-labelledby="form-subtasks-title">
+                <section className="form-subtasks" aria-labelledby="form-subtasks-title">
                     <div className="form-subtasks-header">
                       <div>
                         <span id="form-subtasks-title"><CheckCircle size={18} /> 子ToDo</span>
-                        <small>作業名の変更・完了切替・削除も、最後にまとめて保存されます。</small>
+                        <small>子ToDoの追加・変更も、ToDoと一緒にまとめて保存されます。</small>
                       </div>
                       <strong>{formSubTaskProgress.completed} / {formSubTaskProgress.total} 完了</strong>
                     </div>
@@ -3387,14 +3386,13 @@ export function TodoApp() {
                           addFormSubTask();
                         }}
                         placeholder="新しい子ToDoを入力"
-                        aria-label="編集画面で新しい子ToDoを追加"
+                        aria-label="ToDo作成・編集画面で新しい子ToDoを追加"
                       />
                       <button type="button" onClick={addFormSubTask} disabled={!formSubTaskDraft.trim()}>
                         <Plus size={16} /> 追加
                       </button>
                     </div>
-                  </section>
-                )}
+                </section>
 
                 <div className="form-grid">
                   <div className="form-field date-time-field">
