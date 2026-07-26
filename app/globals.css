@@ -4733,15 +4733,17 @@ body {
 }
 
 .subtask-item {
+  position: relative;
   display: grid;
   min-height: 40px;
-  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  grid-template-columns: 30px 28px minmax(0, 1fr) 30px;
   align-items: center;
   gap: 6px;
   padding: 3px 4px;
   border: 1px solid #e5e3df;
   border-radius: 9px;
   background: #fff;
+  transition: border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease, transform 140ms ease;
 }
 
 .subtask-item > span {
@@ -4763,7 +4765,8 @@ body {
 }
 
 .subtask-toggle,
-.subtask-delete {
+.subtask-delete,
+.subtask-drag-handle {
   display: grid;
   width: 30px;
   height: 30px;
@@ -4777,6 +4780,21 @@ body {
 
 .subtask-toggle {
   color: #9397a4;
+}
+
+.subtask-drag-handle,
+.form-subtask-drag-handle {
+  color: #8f92a0;
+  border: 1px solid #e1dfda;
+  background: #faf9f6;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.subtask-drag-handle:active,
+.form-subtask-drag-handle:active {
+  cursor: grabbing;
 }
 
 .subtask-item.completed .subtask-toggle {
@@ -4794,8 +4812,16 @@ body {
 }
 
 .subtask-toggle:hover,
-.subtask-delete:hover {
+.subtask-delete:hover,
+.subtask-drag-handle:hover,
+.form-subtask-drag-handle:hover {
   background: #f0efec;
+}
+
+.subtask-drag-handle:hover,
+.form-subtask-drag-handle:hover {
+  color: var(--primary);
+  border-color: #c9c8ee;
 }
 
 .subtask-delete:hover {
@@ -4859,15 +4885,17 @@ body {
 }
 
 .form-subtask-row {
+  position: relative;
   display: grid;
   min-height: 42px;
-  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  grid-template-columns: 32px 30px minmax(0, 1fr) 32px;
   align-items: center;
   gap: 7px;
   padding: 4px;
   border: 1px solid #e2e0dc;
   border-radius: 10px;
   background: #fff;
+  transition: border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease, transform 140ms ease;
 }
 
 .form-subtask-row input,
@@ -4897,7 +4925,8 @@ body {
 }
 
 .form-subtask-toggle,
-.form-subtask-delete {
+.form-subtask-delete,
+.form-subtask-drag-handle {
   display: grid;
   width: 32px;
   height: 32px;
@@ -4921,6 +4950,16 @@ body {
   color: #a0a3ab;
 }
 
+.form-subtask-drag-handle {
+  width: 30px;
+  color: #8f92a0;
+  border: 1px solid #e1dfda;
+  background: #faf9f6;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
 .form-subtask-toggle:hover,
 .form-subtask-delete:hover {
   background: #f0efec;
@@ -4928,6 +4967,57 @@ body {
 
 .form-subtask-delete:hover {
   color: #bd5c61;
+}
+
+.subtask-item.dragging,
+.form-subtask-row.dragging {
+  z-index: 3;
+  opacity: 0.58;
+  border-color: rgba(93, 94, 228, 0.52);
+  background: #f6f5ff;
+  box-shadow: inset 0 0 0 2px rgba(93, 94, 228, 0.2);
+  transform: scale(0.985);
+}
+
+.subtask-item.drag-over-target,
+.form-subtask-row.drag-over-target,
+.subtask-item.touch-drop-target,
+.form-subtask-row.touch-drop-target {
+  z-index: 4;
+  border-color: rgba(93, 94, 228, 0.5);
+  background: #f8f7ff;
+  box-shadow: 0 8px 20px rgba(66, 67, 154, 0.12);
+}
+
+.subtask-item.drag-over-target::before,
+.form-subtask-row.drag-over-target::before {
+  position: absolute;
+  right: 6px;
+  left: 6px;
+  height: 4px;
+  border-radius: 999px;
+  content: "";
+  background: var(--primary);
+  box-shadow: 0 0 0 4px rgba(93, 94, 228, 0.12);
+}
+
+.subtask-item.drag-over-before::before,
+.form-subtask-row.drag-over-before::before {
+  top: -3px;
+}
+
+.subtask-item.drag-over-after::before,
+.form-subtask-row.drag-over-after::before {
+  bottom: -3px;
+}
+
+.todo-drag-preview-subtask {
+  min-width: 240px;
+  border-radius: 11px !important;
+}
+
+.todo-drag-preview-subtask .subtask-delete {
+  opacity: 1;
 }
 
 .form-subtask-add {
@@ -4968,9 +5058,16 @@ body {
   .subtask-item,
   .form-subtask-row,
   .form-subtask-row input,
+  .subtask-drag-handle,
+  .form-subtask-drag-handle,
   .form-subtask-add input,
   .form-subtask-add button {
     min-height: 44px;
+  }
+
+  .subtask-drag-handle,
+  .form-subtask-drag-handle {
+    height: 44px;
   }
 
   .form-subtasks {

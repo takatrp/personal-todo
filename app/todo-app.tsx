@@ -139,6 +139,14 @@ type TodoTab = {
   updatedAt: string;
 };
 
+type SubTaskDragContext = "detail" | "form";
+
+type DraggingSubTask = {
+  id: string;
+  context: SubTaskDragContext;
+  title: string;
+};
+
 type TouchDropTarget =
   | { kind: "tab"; targetId: string; placeAfter: boolean }
   | {
@@ -148,7 +156,13 @@ type TouchDropTarget =
       keepStatus: boolean;
       placeAfter: boolean;
     }
-  | { kind: "kanban"; targetStatus: TaskStatus };
+  | { kind: "kanban"; targetStatus: TaskStatus }
+  | {
+      kind: "subtask";
+      context: SubTaskDragContext;
+      targetId: string;
+      placeAfter: boolean;
+    };
 
 type DragOverTarget = {
   key: string;
@@ -297,6 +311,29 @@ function normalizeSubTasks(value: unknown, taskId: string, fallbackCreatedAt: st
 
 function sortSubTasks(subTasks: SubTask[]) {
   return [...subTasks].sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt.localeCompare(right.createdAt));
+}
+
+function reorderSubTaskCollection(
+  subTasks: SubTask[],
+  sourceId: string,
+  targetId: string,
+  placeAfter: boolean,
+) {
+  if (sourceId === targetId) return null;
+  const ordered = sortSubTasks(subTasks);
+  const source = ordered.find((subTask) => subTask.id === sourceId);
+  if (!source) return null;
+  const withoutSource = ordered.filter((subTask) => subTask.id !== sourceId);
+  const targetIndex = withoutSource.findIndex((subTask) => subTask.id === targetId);
+  if (targetIndex < 0) return null;
+  withoutSource.splice(targetIndex + (placeAfter ? 1 : 0), 0, source);
+  const now = new Date().toISOString();
+  return withoutSource.map((subTask, index) => {
+    const sortOrder = index * 1000;
+    return subTask.sortOrder === sortOrder
+      ? subTask
+      : { ...subTask, sortOrder, updatedAt: now };
+  });
 }
 
 function calculateSubTaskProgress(subTasks: SubTask[]) {
@@ -915,6 +952,7 @@ export function TodoApp() {
   const [timelineStart, setTimelineStart] = useState("");
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
+  const [draggingSubTask, setDraggingSubTask] = useState<DraggingSubTask | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<DragOverTarget | null>(null);
   const [touchDropTargetKey, setTouchDropTargetKey] = useState("");
   const [pastingTaskId, setPastingTaskId] = useState<string | null>(null);
@@ -1183,7 +1221,9 @@ export function TodoApp() {
     ? { heading: "タブを移動中", label: draggingTab.name }
     : draggingTask
       ? { heading: "ToDoを移動中", label: draggingTask.title }
-      : null;
+      : draggingSubTask
+        ? { heading: "子ToDoを移動中", label: draggingSubTask.title }
+        : null;
   const activeTaskCount = useMemo(() => tasks.filter((task) => !isDeleted(task)).length, [tasks]);
   const trashTaskCount = useMemo(() => tasks.filter(isDeleted).length, [tasks]);
   const totalAttachmentSize = useMemo(() => tasks.reduce(
@@ -1332,7 +1372,7 @@ export function TodoApp() {
   function setFloatingDragPreview(
     event: DragEvent<HTMLElement>,
     source: HTMLElement,
-    kind: "tab" | "task",
+    kind: "tab" | "task" | "subtask",
   ) {
     clearFloatingDragPreview();
     const bounds = source.getBoundingClientRect();
@@ -1347,7 +1387,11 @@ export function TodoApp() {
     );
     preview.classList.add("todo-drag-preview", `todo-drag-preview-${kind}`);
     preview.setAttribute("aria-hidden", "true");
-    const previewWidth = kind === "task" ? Math.min(bounds.width, 560) : bounds.width;
+    const previewWidth = kind === "task"
+      ? Math.min(bounds.width, 560)
+      : kind === "subtask"
+        ? Math.min(bounds.width, 420)
+        : bounds.width;
     preview.style.width = `${previewWidth}px`;
     preview.style.height = `${bounds.height}px`;
     preview.querySelectorAll("[id]").forEach((element) => element.removeAttribute("id"));
@@ -1389,6 +1433,7 @@ export function TodoApp() {
   function clearPointerDragState() {
     setDraggingTabId(null);
     setDraggingTaskId(null);
+    setDraggingSubTask(null);
     setDragOverTarget(null);
     clearFloatingDragPreview();
   }
@@ -1437,6 +1482,7 @@ export function TodoApp() {
     setDragOverTarget(null);
     setDraggingTabId(null);
     setDraggingTaskId(null);
+    setDraggingSubTask(null);
     clearFloatingDragPreview();
   }
 
@@ -1914,6 +1960,154 @@ export function TodoApp() {
       task.subTasks.filter((item) => item.id !== subTask.id),
       "子ToDoを削除しました",
     );
+  }
+
+  function subTaskDragKey(context: SubTaskDragContext, subTaskId: string) {
+    return `subtask:${context}:${subTaskId}`;
+  }
+
+  function reorderFormSubTasks(sourceId: string, targetId: string, placeAfter: boolean) {
+    const reordered = reorderSubTaskCollection(form.subTasks, sourceId, targetId, placeAfter);
+    if (!reordered) return;
+    setForm((current) => ({
+      ...current,
+      subTasks: reorderSubTaskCollection(current.subTasks, sourceId, targetId, placeAfter) ?? current.subTasks,
+    }));
+    setNotice("子ToDoの並び順を変更しました。ToDoを保存すると反映されます");
+  }
+
+  async function reorderSavedSubTasks(
+    task: Task,
+    sourceId: string,
+    targetId: string,
+    placeAfter: boolean,
+  ) {
+    const reordered = reorderSubTaskCollection(task.subTasks, sourceId, targetId, placeAfter);
+    if (!reordered) return;
+    await saveSubTasks(task, reordered, "子ToDoの並び順を保存しました");
+  }
+
+  function handleSubTaskDragStart(
+    event: DragEvent<HTMLButtonElement>,
+    subTask: SubTask,
+    context: SubTaskDragContext,
+  ) {
+    event.stopPropagation();
+    const row = event.currentTarget.closest<HTMLElement>("[data-todo-subtask-id]");
+    if (row) setFloatingDragPreview(event, row, "subtask");
+    setDragOverTarget(null);
+    setDraggingSubTask({ id: subTask.id, context, title: subTask.title });
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-todo-subtask", subTask.id);
+    event.dataTransfer.setData("application/x-todo-subtask-context", context);
+    event.dataTransfer.setData("text/plain", subTask.id);
+  }
+
+  function draggedSubTaskFromEvent(event: DragEvent<HTMLElement>) {
+    const id = draggingSubTask?.id ||
+      event.dataTransfer.getData("application/x-todo-subtask") ||
+      event.dataTransfer.getData("text/plain");
+    const rawContext = draggingSubTask?.context ||
+      event.dataTransfer.getData("application/x-todo-subtask-context");
+    const context = rawContext === "detail" || rawContext === "form" ? rawContext : null;
+    return id && context ? { id, context } : null;
+  }
+
+  function handleSubTaskDrop(
+    event: DragEvent<HTMLElement>,
+    targetId: string,
+    context: SubTaskDragContext,
+    task?: Task,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const source = draggedSubTaskFromEvent(event);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const placeAfter = event.clientY > bounds.top + bounds.height / 2;
+    clearPointerDragState();
+    if (!source || source.context !== context || source.id === targetId) return;
+    if (context === "form") {
+      reorderFormSubTasks(source.id, targetId, placeAfter);
+    } else if (task) {
+      void reorderSavedSubTasks(task, source.id, targetId, placeAfter);
+    }
+  }
+
+  function handleSubTaskTouchStart(
+    event: TouchEvent<HTMLButtonElement>,
+    subTask: SubTask,
+    context: SubTaskDragContext,
+  ) {
+    event.stopPropagation();
+    updateTouchDropTarget(null);
+    setDragOverTarget(null);
+    setDraggingSubTask({ id: subTask.id, context, title: subTask.title });
+  }
+
+  function handleSubTaskTouchMove(
+    event: TouchEvent<HTMLButtonElement>,
+    context: SubTaskDragContext,
+  ) {
+    const touch = event.touches[0];
+    if (!touch) return;
+    event.preventDefault();
+    const target = document
+      .elementFromPoint(touch.clientX, touch.clientY)
+      ?.closest<HTMLElement>(`[data-todo-subtask-context="${context}"][data-todo-subtask-id]`);
+    const targetId = target?.dataset.todoSubtaskId;
+    if (!target || !targetId) {
+      updateTouchDropTarget(null);
+      clearDragOverTarget();
+      return;
+    }
+    const bounds = target.getBoundingClientRect();
+    const placeAfter = touch.clientY > bounds.top + bounds.height / 2;
+    const dragKey = subTaskDragKey(context, targetId);
+    updateDragOverTarget(dragKey, placeAfter);
+    updateTouchDropTarget(
+      { kind: "subtask", context, targetId, placeAfter },
+      dragKey,
+    );
+  }
+
+  function handleSubTaskTouchEnd(
+    sourceId: string,
+    context: SubTaskDragContext,
+    task?: Task,
+  ) {
+    const target = touchDropTargetRef.current;
+    clearTouchDragState();
+    if (
+      target?.kind !== "subtask" ||
+      target.context !== context ||
+      target.targetId === sourceId
+    ) return;
+    if (context === "form") {
+      reorderFormSubTasks(sourceId, target.targetId, target.placeAfter);
+    } else if (task) {
+      void reorderSavedSubTasks(task, sourceId, target.targetId, target.placeAfter);
+    }
+  }
+
+  function handleSubTaskHandleKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    subTask: SubTask,
+    orderedSubTasks: SubTask[],
+    context: SubTaskDragContext,
+    task?: Task,
+  ) {
+    if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const index = orderedSubTasks.findIndex((item) => item.id === subTask.id);
+    const targetIndex = event.key === "ArrowUp" ? index - 1 : index + 1;
+    const target = orderedSubTasks[targetIndex];
+    if (!target) return;
+    if (context === "form") {
+      reorderFormSubTasks(subTask.id, target.id, event.key === "ArrowDown");
+    } else if (task) {
+      void reorderSavedSubTasks(task, subTask.id, target.id, event.key === "ArrowDown");
+    }
   }
 
   function handleTaskDragStart(event: DragEvent<HTMLElement>, task: Task) {
@@ -3144,8 +3338,24 @@ export function TodoApp() {
                 </form>
                 {selectedTask.subTasks.length > 0 ? (
                   <div className="subtask-list">
-                    {sortSubTasks(selectedTask.subTasks).map((subTask) => (
-                      <div className={`subtask-item${subTask.completedAt ? " completed" : ""}`} key={subTask.id}>
+                    {sortSubTasks(selectedTask.subTasks).map((subTask) => {
+                      const dragKey = subTaskDragKey("detail", subTask.id);
+                      return (
+                        <div
+                          className={`subtask-item${subTask.completedAt ? " completed" : ""}${draggingSubTask?.context === "detail" && draggingSubTask.id === subTask.id ? " dragging" : ""}${touchDropTargetKey === dragKey ? " touch-drop-target" : ""}${dragTargetClass(dragKey)}`}
+                          key={subTask.id}
+                          data-todo-subtask-id={subTask.id}
+                          data-todo-subtask-context="detail"
+                          onDragOver={(event) => {
+                            if (draggingSubTask?.context !== "detail") return;
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = "move";
+                            const bounds = event.currentTarget.getBoundingClientRect();
+                            updateDragOverTarget(dragKey, event.clientY > bounds.top + bounds.height / 2);
+                          }}
+                          onDragLeave={(event) => handleDragTargetLeave(event, dragKey)}
+                          onDrop={(event) => handleSubTaskDrop(event, subTask.id, "detail", selectedTask)}
+                        >
                         <button
                           type="button"
                           className="subtask-toggle"
@@ -3154,6 +3364,29 @@ export function TodoApp() {
                           aria-pressed={Boolean(subTask.completedAt)}
                         >
                           <CheckCircle size={19} weight={subTask.completedAt ? "fill" : "regular"} />
+                        </button>
+                        <button
+                          type="button"
+                          className="subtask-drag-handle"
+                          draggable
+                          aria-label={`${subTask.title}をドラッグして並び替え`}
+                          aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                          title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋上下キーにも対応）"
+                          onDragStart={(event) => handleSubTaskDragStart(event, subTask, "detail")}
+                          onDragEnd={clearPointerDragState}
+                          onKeyDown={(event) => handleSubTaskHandleKeyDown(
+                            event,
+                            subTask,
+                            sortSubTasks(selectedTask.subTasks),
+                            "detail",
+                            selectedTask,
+                          )}
+                          onTouchStart={(event) => handleSubTaskTouchStart(event, subTask, "detail")}
+                          onTouchMove={(event) => handleSubTaskTouchMove(event, "detail")}
+                          onTouchEnd={() => handleSubTaskTouchEnd(subTask.id, "detail", selectedTask)}
+                          onTouchCancel={clearTouchDragState}
+                        >
+                          <DotsSixVertical size={17} weight="bold" />
                         </button>
                         <span>{subTask.title}</span>
                         <button
@@ -3165,8 +3398,9 @@ export function TodoApp() {
                         >
                           <Trash size={15} />
                         </button>
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="detail-empty subtask-empty">作業を小さく分けると、ここに進捗が表示されます。</p>
@@ -3310,7 +3544,7 @@ export function TodoApp() {
                     <div className="form-subtasks-header">
                       <div>
                         <span id="form-subtasks-title"><CheckCircle size={18} /> 子ToDo</span>
-                        <small>子ToDoの追加・変更も、ToDoと一緒にまとめて保存されます。</small>
+                        <small>追加・変更・並び替えも、ToDoと一緒にまとめて保存されます。</small>
                       </div>
                       <strong>{formSubTaskProgress.completed} / {formSubTaskProgress.total} 完了</strong>
                     </div>
@@ -3328,8 +3562,24 @@ export function TodoApp() {
 
                     {form.subTasks.length > 0 && (
                       <div className="form-subtask-list">
-                        {sortSubTasks(form.subTasks).map((subTask) => (
-                          <div className={`form-subtask-row${subTask.completedAt ? " completed" : ""}`} key={subTask.id}>
+                        {sortSubTasks(form.subTasks).map((subTask) => {
+                          const dragKey = subTaskDragKey("form", subTask.id);
+                          return (
+                            <div
+                              className={`form-subtask-row${subTask.completedAt ? " completed" : ""}${draggingSubTask?.context === "form" && draggingSubTask.id === subTask.id ? " dragging" : ""}${touchDropTargetKey === dragKey ? " touch-drop-target" : ""}${dragTargetClass(dragKey)}`}
+                              key={subTask.id}
+                              data-todo-subtask-id={subTask.id}
+                              data-todo-subtask-context="form"
+                              onDragOver={(event) => {
+                                if (draggingSubTask?.context !== "form") return;
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                                const bounds = event.currentTarget.getBoundingClientRect();
+                                updateDragOverTarget(dragKey, event.clientY > bounds.top + bounds.height / 2);
+                              }}
+                              onDragLeave={(event) => handleDragTargetLeave(event, dragKey)}
+                              onDrop={(event) => handleSubTaskDrop(event, subTask.id, "form")}
+                            >
                             <button
                               type="button"
                               className="form-subtask-toggle"
@@ -3341,6 +3591,28 @@ export function TodoApp() {
                               aria-pressed={Boolean(subTask.completedAt)}
                             >
                               <CheckCircle size={20} weight={subTask.completedAt ? "fill" : "regular"} />
+                            </button>
+                            <button
+                              type="button"
+                              className="form-subtask-drag-handle"
+                              draggable
+                              aria-label={`${subTask.title || "子ToDo"}をドラッグして並び替え`}
+                              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                              title="ドラッグで並び替え（スマホは押さえたまま移動／Alt＋上下キーにも対応）"
+                              onDragStart={(event) => handleSubTaskDragStart(event, subTask, "form")}
+                              onDragEnd={clearPointerDragState}
+                              onKeyDown={(event) => handleSubTaskHandleKeyDown(
+                                event,
+                                subTask,
+                                sortSubTasks(form.subTasks),
+                                "form",
+                              )}
+                              onTouchStart={(event) => handleSubTaskTouchStart(event, subTask, "form")}
+                              onTouchMove={(event) => handleSubTaskTouchMove(event, "form")}
+                              onTouchEnd={() => handleSubTaskTouchEnd(subTask.id, "form")}
+                              onTouchCancel={clearTouchDragState}
+                            >
+                              <DotsSixVertical size={17} weight="bold" />
                             </button>
                             <input
                               type="text"
@@ -3362,8 +3634,9 @@ export function TodoApp() {
                             >
                               <Trash size={16} />
                             </button>
-                          </div>
-                        ))}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
 
