@@ -964,6 +964,7 @@ export function TodoApp() {
   const [isDataManagerOpen, setIsDataManagerOpen] = useState(false);
   const [isProcessingData, setIsProcessingData] = useState(false);
   const [isSavingTab, setIsSavingTab] = useState(false);
+  const [isFileDragActive, setIsFileDragActive] = useState(false);
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [tabDraft, setTabDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -992,6 +993,7 @@ export function TodoApp() {
   const lastTitleClickRef = useRef<{ taskId: string; at: number } | null>(null);
   const touchDropTargetRef = useRef<TouchDropTarget | null>(null);
   const dragPreviewRef = useRef<HTMLElement | null>(null);
+  const fileDragDepthRef = useRef(0);
 
   useEffect(() => {
     const isDesignPreview = new URLSearchParams(window.location.search).get("design-preview") === "1";
@@ -1616,6 +1618,8 @@ export function TodoApp() {
   function openCreateForm() {
     setEditingId(null);
     setFormSubTaskDraft("");
+    fileDragDepthRef.current = 0;
+    setIsFileDragActive(false);
     setForm({ ...initialForm, tabId: activeTabId === "all" ? "" : activeTabId });
     setIsFormOpen(true);
   }
@@ -1623,6 +1627,8 @@ export function TodoApp() {
   function openCreateForStatus(status: TaskStatus) {
     setEditingId(null);
     setFormSubTaskDraft("");
+    fileDragDepthRef.current = 0;
+    setIsFileDragActive(false);
     setForm({
       ...initialForm,
       status,
@@ -1636,6 +1642,8 @@ export function TodoApp() {
     const due = toDateFormValue(task.dueAt, "17:00");
     setEditingId(task.id);
     setFormSubTaskDraft("");
+    fileDragDepthRef.current = 0;
+    setIsFileDragActive(false);
     setForm({
       title: task.title,
       description: task.description,
@@ -1662,6 +1670,8 @@ export function TodoApp() {
     if (isSaving) return;
     setIsFormOpen(false);
     setFormSubTaskDraft("");
+    fileDragDepthRef.current = 0;
+    setIsFileDragActive(false);
   }
 
   function addFormSubTask() {
@@ -2290,9 +2300,10 @@ export function TodoApp() {
     }
   }
 
-  function handleFiles(files: FileList | null) {
+  function handleFiles(files: FileList | File[] | null) {
     if (!files) return;
     const incoming = Array.from(files);
+    if (incoming.length === 0) return;
     const limitMessage = attachmentLimitMessage(form.attachments, incoming);
     if (limitMessage) {
       setNotice(limitMessage);
@@ -2303,6 +2314,44 @@ export function TodoApp() {
       ...current,
       attachments: [...current.attachments, ...attachments],
     }));
+    setNotice(`${attachments.length}件のファイルを追加しました`);
+  }
+
+  function isFileDrag(event: DragEvent<HTMLElement>) {
+    return Array.from(event.dataTransfer.types).includes("Files");
+  }
+
+  function handleAttachmentDragEnter(event: DragEvent<HTMLElement>) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    fileDragDepthRef.current += 1;
+    setIsFileDragActive(true);
+  }
+
+  function handleAttachmentDragOver(event: DragEvent<HTMLElement>) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setIsFileDragActive(true);
+  }
+
+  function handleAttachmentDragLeave(event: DragEvent<HTMLElement>) {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+    if (fileDragDepthRef.current === 0) setIsFileDragActive(false);
+  }
+
+  function handleAttachmentDrop(event: DragEvent<HTMLElement>) {
+    if (!isFileDrag(event) && event.dataTransfer.files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    fileDragDepthRef.current = 0;
+    setIsFileDragActive(false);
+    handleFiles(event.dataTransfer.files);
   }
 
   async function handleCardPaste(event: ClipboardEvent<HTMLElement>, task: Task) {
@@ -3807,9 +3856,18 @@ export function TodoApp() {
                   ☆ 現在の内容をテンプレートとして保存
                 </button>
 
-                <div className="form-field form-field-full">
+                <div
+                  className="form-field form-field-full file-upload-field"
+                  onDragEnter={handleAttachmentDragEnter}
+                  onDragOver={handleAttachmentDragOver}
+                  onDragLeave={handleAttachmentDragLeave}
+                  onDrop={handleAttachmentDrop}
+                >
                   <span>ファイル添付</span>
-                  <label className="file-drop">
+                  <label
+                    className={`file-drop${isFileDragActive ? " drag-active" : ""}`}
+                    aria-label="ファイルをドラッグ＆ドロップまたは選択して添付"
+                  >
                     <input
                       type="file"
                       multiple
@@ -3818,8 +3876,15 @@ export function TodoApp() {
                         event.target.value = "";
                       }}
                     />
-                    <strong><Paperclip size={17} aria-hidden="true" /> ファイルを選ぶ</strong>
-                    <small>1ファイル8MB・合計20MB・最大10件まで</small>
+                    <strong>
+                      <Paperclip size={19} aria-hidden="true" />
+                      {isFileDragActive ? "ここにドロップして添付" : "ドラッグ＆ドロップまたはクリックして選択"}
+                    </strong>
+                    <small>
+                      {isFileDragActive
+                        ? "ファイルを離すと一覧へ追加されます"
+                        : "1ファイル8MB・合計20MB・最大10件まで"}
+                    </small>
                   </label>
                   {form.attachments.length > 0 && (
                     <div className="selected-files">

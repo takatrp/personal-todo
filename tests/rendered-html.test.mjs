@@ -67,6 +67,13 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /ファイル添付/);
   assert.match(app, /indexedDB\.open/);
   assert.match(app, /MAX_FILE_SIZE/);
+  assert.match(app, /function handleAttachmentDragEnter/);
+  assert.match(app, /function handleAttachmentDragOver/);
+  assert.match(app, /function handleAttachmentDrop/);
+  assert.match(app, /event\.dataTransfer\.files/);
+  assert.match(app, /event\.dataTransfer\.dropEffect = "copy"/);
+  assert.match(app, /onDrop=\{handleAttachmentDrop\}/);
+  assert.match(app, /ドラッグ＆ドロップまたはクリックして選択/);
   assert.match(app, /function handleCardPaste/);
   assert.match(app, /event\.clipboardData\.items/);
   assert.match(app, /filesToAttachments\(imageFiles, true\)/);
@@ -152,6 +159,7 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /@media \(max-width: 720px\)/);
   assert.match(css, /\.tab-modal/);
   assert.match(css, /\.paste-hint/);
+  assert.match(css, /\.file-drop\.drag-active/);
   assert.match(css, /\.task-card:focus-within/);
   assert.match(css, /\.data-modal/);
   assert.match(css, /\.image-preview-modal/);
