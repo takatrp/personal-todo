@@ -957,6 +957,7 @@ export function TodoApp() {
   const [touchDropTargetKey, setTouchDropTargetKey] = useState("");
   const [pastingTaskId, setPastingTaskId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [showIncompleteOnly, setShowIncompleteOnly] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -1175,6 +1176,8 @@ export function TodoApp() {
     };
   }, [allTabScopedTasks, tabScopedTasks]);
 
+  const incompleteFilterActive = showIncompleteOnly && activeView !== "done" && activeView !== "trash";
+
   const visibleTasks = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("ja-JP");
     const now = new Date();
@@ -1188,6 +1191,7 @@ export function TodoApp() {
         (activeView === "done" && isComplete(task)) ||
         (activeView === "trash" && isDeleted(task));
       if (!matchesView) return false;
+      if (incompleteFilterActive && isComplete(task)) return false;
       if (!query) return true;
       return [
         task.title,
@@ -1202,7 +1206,7 @@ export function TodoApp() {
         .toLocaleLowerCase("ja-JP")
         .includes(query);
     });
-  }, [activeView, allTabScopedTasks, search, tabNameById, tabScopedTasks]);
+  }, [activeView, allTabScopedTasks, incompleteFilterActive, search, tabNameById, tabScopedTasks]);
 
   const timelineDays = useMemo(() => {
     if (!timelineStart) return [];
@@ -1246,11 +1250,13 @@ export function TodoApp() {
     setActiveTabId("all");
     setActiveView("all");
     setSearch("");
+    setShowIncompleteOnly(false);
   }
 
   function clearFilterConditions() {
     setActiveView("all");
     setSearch("");
+    setShowIncompleteOnly(false);
   }
 
   function beginInlineTitleEdit(task: Task) {
@@ -2696,7 +2702,9 @@ export function TodoApp() {
       ? `検索：${search.trim()}`
       : "";
   const sectionTitle = activeTab ? `${activeTab.name}・${viewLabels[activeView]}` : viewLabels[activeView];
-  const emptyTitle = activeView === "trash" && !search
+  const emptyTitle = incompleteFilterActive && !search
+    ? "未完了のToDoはありません"
+    : activeView === "trash" && !search
     ? "ゴミ箱は空です"
     : search
     ? "検索に一致するToDoがありません"
@@ -2787,13 +2795,25 @@ export function TodoApp() {
             <p className="today-label">{todayText}</p>
           </div>
 
-          {(filterLabel || search) && (
+          {(filterLabel || search || incompleteFilterActive) && (
             <div className="active-filter-row">
               <strong><Funnel size={17} /> フィルター</strong>
               {filterLabel && (
                 <span className="active-filter-chip">
                   {filterLabel}
                   <button type="button" onClick={clearFilterConditions} aria-label="表示条件を解除"><X size={14} /></button>
+                </span>
+              )}
+              {incompleteFilterActive && (
+                <span className="active-filter-chip incomplete-filter-chip">
+                  未完了のみ
+                  <button
+                    type="button"
+                    onClick={() => setShowIncompleteOnly(false)}
+                    aria-label="未完了のみの表示を解除"
+                  >
+                    <X size={14} />
+                  </button>
                 </span>
               )}
               <button type="button" className="clear-filter-button" onClick={clearFilterConditions}>条件を解除</button>
@@ -2910,6 +2930,18 @@ export function TodoApp() {
                 </button>
                 </div>
               )}
+              {activeView !== "done" && activeView !== "trash" && (
+                <button
+                  type="button"
+                  className={`incomplete-filter-toggle${incompleteFilterActive ? " active" : ""}`}
+                  onClick={() => setShowIncompleteOnly((current) => !current)}
+                  aria-pressed={incompleteFilterActive}
+                  title="完了済みを隠して、未完了のToDoだけを表示"
+                >
+                  <CheckCircle size={17} weight={incompleteFilterActive ? "fill" : "regular"} />
+                  未完了のみ
+                </button>
+              )}
               <div className="search-box">
                 <MagnifyingGlass size={18} aria-hidden="true" />
                 <label className="sr-only" htmlFor="task-search">ToDoを検索</label>
@@ -2935,8 +2967,10 @@ export function TodoApp() {
           {!isLoading && visibleTasks.length > 0 && effectiveDisplayMode === "kanban" && (
             <div className="kanban-wrap">
               <p className="view-hint">カード左のハンドルをドラッグして並び替え・列移動。タイトルはダブルクリック、または編集ボタンから変更できます。</p>
-              <div className="kanban-board" aria-label="かんばんボード">
-                {(Object.keys(statusLabels) as TaskStatus[]).map((status) => {
+              <div className={`kanban-board${incompleteFilterActive ? " incomplete-only" : ""}`} aria-label="かんばんボード">
+                {(Object.keys(statusLabels) as TaskStatus[])
+                  .filter((status) => !incompleteFilterActive || status !== "done")
+                  .map((status) => {
                   const columnTasks = visibleTasks.filter((task) => task.status === status);
                   const kanbanDragKey = `kanban:${status}`;
                   return (

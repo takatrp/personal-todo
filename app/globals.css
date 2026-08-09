@@ -1109,6 +1109,10 @@ select:focus-visible {
   scrollbar-color: #c9c6d6 transparent;
 }
 
+.kanban-board.incomplete-only {
+  grid-template-columns: repeat(3, minmax(225px, 1fr));
+}
+
 .kanban-column {
   display: flex;
   min-height: 360px;
@@ -2603,6 +2607,10 @@ select:focus-visible {
     scroll-snap-type: x proximity;
   }
 
+  .kanban-board.incomplete-only {
+    grid-template-columns: repeat(3, minmax(280px, 78vw));
+  }
+
   .kanban-column {
     min-height: 330px;
     scroll-snap-align: start;
@@ -3554,6 +3562,43 @@ body {
   color: var(--primary);
   background: #fff;
   box-shadow: 0 3px 10px rgba(31, 36, 48, 0.08);
+}
+
+.incomplete-filter-toggle {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: #626879;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.incomplete-filter-toggle:hover,
+.incomplete-filter-toggle:focus-visible {
+  border-color: #b9b9ed;
+  color: var(--primary);
+  background: #f8f7ff;
+}
+
+.incomplete-filter-toggle.active {
+  border-color: #a8a8eb;
+  color: #4445ba;
+  background: #efefff;
+  box-shadow: inset 0 0 0 1px rgba(93, 94, 228, 0.08);
+}
+
+.active-filter-chip.incomplete-filter-chip {
+  color: #4d4eb4;
+  background: #ededff;
 }
 
 .search-box {

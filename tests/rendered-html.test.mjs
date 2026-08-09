@@ -137,6 +137,11 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /const TEMPLATE_STORE_NAME = "templates"/);
   assert.match(app, /removeTabAndUnassign/);
   assert.match(app, /function showAllTasks/);
+  assert.match(app, /showIncompleteOnly/);
+  assert.match(app, /incompleteFilterActive && isComplete\(task\)/);
+  assert.match(app, /aria-pressed=\{incompleteFilterActive\}/);
+  assert.match(app, /未完了のみ/);
+  assert.match(app, /status !== "done"/);
   assert.match(app, /const workspaceTitle/);
   assert.match(app, /className={`workspace-grid/);
   assert.match(app, /task-table-header/);
@@ -155,6 +160,8 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.task-table-header/);
   assert.match(css, /\.task-detail-panel/);
   assert.match(css, /\.active-filter-chip/);
+  assert.match(css, /\.incomplete-filter-toggle/);
+  assert.match(css, /\.kanban-board\.incomplete-only/);
   assert.match(css, /@media \(max-width: 960px\)/);
   assert.match(css, /@media \(max-width: 720px\)/);
   assert.match(css, /\.tab-modal/);
