@@ -116,6 +116,11 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /function deleteSubTask/);
   assert.match(app, /function addFormSubTask/);
   assert.match(app, /function updateFormSubTask/);
+  assert.match(app, /function toggleFormSubTask/);
+  assert.match(app, /hasCompletedSubTask \? "doing" : current\.status/);
+  assert.match(app, /syncStatusWithProgress && hasCompletedSubTask \? "doing" : previousTask\.status/);
+  assert.match(app, /子ToDoを完了し、ToDoを進行中にしました/);
+  assert.match(app, /onClick=\{\(\) => toggleFormSubTask\(subTask\.id\)\}/);
   assert.match(app, /function reorderSubTaskCollection/);
   assert.match(app, /function reorderSavedSubTasks/);
   assert.match(app, /function reorderFormSubTasks/);
@@ -127,7 +132,7 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /data-todo-subtask-context="form"/);
   assert.match(app, /subTasks: sortSubTasks\(task\.subTasks\)/);
   assert.match(app, /編集中の子ToDo進捗/);
-  assert.match(app, /追加・変更・並び替えも、ToDoと一緒にまとめて保存されます/);
+  assert.match(app, /1件完了すると、状態は自動で「進行中」になります/);
   assert.match(app, /aria-label="ToDo作成・編集画面で新しい子ToDoを追加"/);
   assert.doesNotMatch(app, /\{editingId && \(\s*<section className="form-subtasks"/);
   assert.match(app, /子ToDo/);

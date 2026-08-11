@@ -1712,6 +1712,21 @@ export function TodoApp() {
     }));
   }
 
+  function toggleFormSubTask(id: string) {
+    const now = new Date().toISOString();
+    setForm((current) => {
+      const subTasks = current.subTasks.map((subTask) => subTask.id === id
+        ? { ...subTask, completedAt: subTask.completedAt ? "" : now, updatedAt: now }
+        : subTask);
+      const hasCompletedSubTask = subTasks.some((subTask) => Boolean(subTask.completedAt));
+      return {
+        ...current,
+        subTasks,
+        status: hasCompletedSubTask ? "doing" : current.status,
+      };
+    });
+  }
+
   function removeFormSubTask(id: string) {
     setForm((current) => ({
       ...current,
@@ -1917,11 +1932,20 @@ export function TodoApp() {
     await moveTaskStatus(task, task.status === "done" ? "open" : "done");
   }
 
-  async function saveSubTasks(task: Task, subTasks: SubTask[], successMessage: string) {
+  async function saveSubTasks(
+    task: Task,
+    subTasks: SubTask[],
+    successMessage: string,
+    syncStatusWithProgress = false,
+  ) {
     const previousTask = tasks.find((item) => item.id === task.id) ?? task;
+    const sortedSubTasks = sortSubTasks(subTasks);
+    const hasCompletedSubTask = sortedSubTasks.some((subTask) => Boolean(subTask.completedAt));
     const updatedTask: Task = {
       ...previousTask,
-      subTasks: sortSubTasks(subTasks),
+      subTasks: sortedSubTasks,
+      status: syncStatusWithProgress && hasCompletedSubTask ? "doing" : previousTask.status,
+      completedAt: syncStatusWithProgress && hasCompletedSubTask ? "" : previousTask.completedAt,
       updatedAt: new Date().toISOString(),
     };
     setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? updatedTask : item)));
@@ -1966,7 +1990,9 @@ export function TodoApp() {
     const nextCompletedAt = subTask.completedAt ? "" : now;
     await saveSubTasks(task, task.subTasks.map((item) => item.id === subTask.id
       ? { ...item, completedAt: nextCompletedAt, updatedAt: now }
-      : item), nextCompletedAt ? "子ToDoを完了しました" : "子ToDoを未完了に戻しました");
+      : item), nextCompletedAt
+        ? "子ToDoを完了し、ToDoを進行中にしました"
+        : "子ToDoを未完了に戻しました", true);
   }
 
   async function deleteSubTask(task: Task, subTask: SubTask) {
@@ -3627,7 +3653,7 @@ export function TodoApp() {
                     <div className="form-subtasks-header">
                       <div>
                         <span id="form-subtasks-title"><CheckCircle size={18} /> 子ToDo</span>
-                        <small>追加・変更・並び替えも、ToDoと一緒にまとめて保存されます。</small>
+                        <small>追加・変更・並び替えも一緒に保存。1件完了すると、状態は自動で「進行中」になります。</small>
                       </div>
                       <strong>{formSubTaskProgress.completed} / {formSubTaskProgress.total} 完了</strong>
                     </div>
@@ -3666,10 +3692,7 @@ export function TodoApp() {
                             <button
                               type="button"
                               className="form-subtask-toggle"
-                              onClick={() => updateFormSubTask(subTask.id, (current) => ({
-                                ...current,
-                                completedAt: current.completedAt ? "" : new Date().toISOString(),
-                              }))}
+                              onClick={() => toggleFormSubTask(subTask.id)}
                               aria-label={`${subTask.title}を${subTask.completedAt ? "未完了に戻す" : "完了する"}`}
                               aria-pressed={Boolean(subTask.completedAt)}
                             >
