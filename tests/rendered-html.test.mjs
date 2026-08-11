@@ -211,8 +211,13 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /window\.addEventListener\("online"/);
   assert.match(app, /PC・スマホで同期/);
   assert.match(app, /ログインリンクを送る/);
+  assert.match(app, /over_email_send_rate_limit/);
+  assert.match(app, /最後の正常送信から約1時間/);
+  assert.match(app, /Gmail内のログインリンクをタップせず/);
+  assert.match(app, /Arc Searchなどで一度開いたリンク/);
   assert.match(css, /\.cloud-auth-backdrop/);
   assert.match(css, /\.cloud-sync-button/);
+  assert.match(css, /\.safari-login-guide/);
   assert.match(supabaseClient, /persistSession: true/);
   assert.match(supabaseClient, /detectSessionInUrl: true/);
   assert.match(supabaseClient, /GITHUB_PAGES_PATH = "\/personal-todo\/"/);

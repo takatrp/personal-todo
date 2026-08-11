@@ -216,6 +216,7 @@ type CloudPayload = {
 };
 type CloudSnapshot = { tasks: Task[]; tabs: TodoTab[]; templates: TodoTemplate[] };
 type CloudSyncStatus = "local" | "connecting" | "syncing" | "synced" | "error";
+type AuthDeliveryState = "idle" | "sent" | "rate-limited" | "error";
 type CloudStateRow = {
   payload: unknown;
   revision: number;
@@ -1087,6 +1088,7 @@ export function TodoApp() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
+  const [authDeliveryState, setAuthDeliveryState] = useState<AuthDeliveryState>("idle");
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isCloudReady, setIsCloudReady] = useState(!hasTodoSupabaseConfig());
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>(
@@ -1786,6 +1788,7 @@ export function TodoApp() {
     if (!todoSupabase || !authEmail.trim() || isAuthSubmitting) return;
     setIsAuthSubmitting(true);
     setAuthMessage("");
+    setAuthDeliveryState("idle");
     try {
       const { error } = await todoSupabase.auth.signInWithOtp({
         email: authEmail.trim(),
@@ -1795,10 +1798,18 @@ export function TodoApp() {
         },
       });
       if (error) throw error;
-      setAuthMessage("ログイン用メールを送りました。メール内のリンクを開いてください。");
+      setAuthDeliveryState("sent");
+      setAuthMessage("ログイン用メールを送りました。最新のメールにあるリンクを1回だけ使用してください。");
     } catch (error) {
       console.error("Magic link sign-in failed", error);
-      setAuthMessage("ログイン用メールを送れませんでした。メールアドレスと通信環境をご確認ください。");
+      const authError = error as { status?: number; code?: string };
+      if (authError.status === 429 || authError.code === "over_email_send_rate_limit") {
+        setAuthDeliveryState("rate-limited");
+        setAuthMessage("短時間にログインメールを複数回送ったため、一時的に送信が制限されています。最後の正常送信から約1時間あけて、1回だけ再送してください。");
+      } else {
+        setAuthDeliveryState("error");
+        setAuthMessage("ログイン用メールを送れませんでした。メールアドレスと通信環境をご確認ください。");
+      }
     } finally {
       setIsAuthSubmitting(false);
     }
@@ -1832,6 +1843,7 @@ export function TodoApp() {
     setLastCloudSyncAt("");
     setAuthEmail("");
     setAuthMessage("");
+    setAuthDeliveryState("idle");
   }
 
   function retryCloudSync() {
@@ -3381,7 +3393,13 @@ export function TodoApp() {
                     autoComplete="email"
                     placeholder="name@example.com"
                     value={authEmail}
-                    onChange={(event) => setAuthEmail(event.target.value)}
+                    onChange={(event) => {
+                      setAuthEmail(event.target.value);
+                      if (authDeliveryState !== "idle") {
+                        setAuthDeliveryState("idle");
+                        setAuthMessage("");
+                      }
+                    }}
                     required
                   />
                   <button className="primary-button" type="submit" disabled={isAuthSubmitting || !authEmail.trim()}>
@@ -3389,6 +3407,16 @@ export function TodoApp() {
                   </button>
                 </form>
                 <small>パスワードは不要です。届いたメールのリンクを開くだけでログインできます。</small>
+                {(authDeliveryState === "sent" || authDeliveryState === "rate-limited") && (
+                  <aside className="safari-login-guide" aria-label="Safariでログインする方法">
+                    <strong>iPhoneでSafariを使う場合</strong>
+                    <ol>
+                      <li>Gmail内のログインリンクをタップせず、長押しして「リンクをコピー」</li>
+                      <li>Safariを開き、アドレス欄へ貼り付けて移動</li>
+                    </ol>
+                    <small>リンクは1回だけ有効です。Arc Searchなどで一度開いたリンクは、Safariでは再利用できません。</small>
+                  </aside>
+                )}
               </>
             ) : (
               <>
@@ -3398,7 +3426,11 @@ export function TodoApp() {
                 <span className="cloud-auth-progress" aria-label="同期中" />
               </>
             )}
-            {authMessage && <p className="cloud-auth-message" role="status">{authMessage}</p>}
+            {authMessage && (
+              <p className={`cloud-auth-message state-${authDeliveryState}`} role={authDeliveryState === "error" || authDeliveryState === "rate-limited" ? "alert" : "status"}>
+                {authMessage}
+              </p>
+            )}
           </section>
         </div>
       )}
