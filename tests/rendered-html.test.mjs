@@ -219,7 +219,12 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.cloud-sync-button/);
   assert.match(css, /\.safari-login-guide/);
   assert.match(supabaseClient, /persistSession: true/);
-  assert.match(supabaseClient, /detectSessionInUrl: true/);
+  assert.match(supabaseClient, /detectSessionInUrl: false/);
+  assert.match(supabaseClient, /resolveTodoInitialSession/);
+  assert.match(supabaseClient, /client\.auth\.setSession/);
+  assert.match(supabaseClient, /client\.auth\.exchangeCodeForSession/);
+  assert.match(supabaseClient, /window\.history\.replaceState/);
+  assert.match(app, /resolveTodoInitialSession\(todoSupabase\)/);
   assert.match(supabaseClient, /GITHUB_PAGES_PATH = "\/personal-todo\/"/);
   assert.match(schema, /create table if not exists public\.todo_sync_states/);
   assert.match(schema, /using \(\(select auth\.uid\(\)\) = user_id\)/);

@@ -21,6 +21,7 @@ import {
   createTodoSupabaseClient,
   getTodoAuthRedirectUrl,
   hasTodoSupabaseConfig,
+  resolveTodoInitialSession,
 } from "./supabase-client";
 
 type WebIconProps = HTMLAttributes<HTMLElement> & {
@@ -1168,14 +1169,14 @@ export function TodoApp() {
     }
 
     let active = true;
-    todoSupabase.auth.getSession().then(({ data, error }) => {
+    resolveTodoInitialSession(todoSupabase).then(({ session: initialSession, error }) => {
       if (!active) return;
       if (error) {
         setAuthMessage("ログイン状態を確認できませんでした。通信環境をご確認ください。");
         setCloudSyncStatus("error");
       }
-      authUserIdRef.current = data.session?.user.id ?? "";
-      setSession(data.session);
+      authUserIdRef.current = initialSession?.user.id ?? "";
+      setSession(initialSession);
       setIsAuthReady(true);
     });
     const { data: listener } = todoSupabase.auth.onAuthStateChange((_event, nextSession) => {

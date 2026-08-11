@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
 
 const GITHUB_PAGES_HOST = "takatrp.github.io";
 const GITHUB_PAGES_PATH = "/personal-todo/";
@@ -7,6 +7,11 @@ const GITHUB_PAGES_URL = `https://${GITHUB_PAGES_HOST}${GITHUB_PAGES_PATH}`;
 type SupabaseConfig = {
   url: string;
   publishableKey: string;
+};
+
+type TodoInitialSessionResult = {
+  session: Session | null;
+  error: Error | null;
 };
 
 let browserClient: SupabaseClient | null | undefined;
@@ -48,7 +53,7 @@ export function getSupabaseBrowserClient(): SupabaseClient | null {
   browserClient = createClient(url, publishableKey, {
     auth: {
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      detectSessionInUrl: false,
       persistSession: true,
     },
   });
@@ -74,6 +79,75 @@ export function getMagicLinkRedirectUrl(currentUrl?: string): string {
     return url.toString();
   } catch {
     return GITHUB_PAGES_URL;
+  }
+}
+
+function clearAuthCallbackFromUrl(url: URL): void {
+  const cleanUrl = new URL(url.toString());
+  ["code", "error", "error_code", "error_description"].forEach((key) => {
+    cleanUrl.searchParams.delete(key);
+  });
+  cleanUrl.hash = "";
+  window.history.replaceState(window.history.state, "", cleanUrl.toString());
+}
+
+export async function resolveTodoInitialSession(
+  client: SupabaseClient,
+): Promise<TodoInitialSessionResult> {
+  if (typeof window === "undefined") {
+    const { data, error } = await client.auth.getSession();
+    return { session: data.session, error };
+  }
+
+  const callbackUrl = new URL(window.location.href);
+  const hashParams = new URLSearchParams(callbackUrl.hash.replace(/^#/, ""));
+  const accessToken = hashParams.get("access_token");
+  const refreshToken = hashParams.get("refresh_token");
+  const code = callbackUrl.searchParams.get("code");
+  const callbackError =
+    hashParams.get("error_description") ??
+    callbackUrl.searchParams.get("error_description") ??
+    hashParams.get("error") ??
+    callbackUrl.searchParams.get("error");
+  const hasAuthCallback = Boolean(
+    accessToken ||
+      refreshToken ||
+      code ||
+      callbackError ||
+      callbackUrl.searchParams.get("error_code"),
+  );
+
+  try {
+    if (callbackError) {
+      return { session: null, error: new Error(callbackError) };
+    }
+
+    if (accessToken || refreshToken) {
+      if (!accessToken || !refreshToken) {
+        return {
+          session: null,
+          error: new Error("ログイン情報を正しく受け取れませんでした。"),
+        };
+      }
+
+      const { data, error } = await client.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      return { session: data.session, error };
+    }
+
+    if (code) {
+      const { data, error } = await client.auth.exchangeCodeForSession(code);
+      return { session: data.session, error };
+    }
+
+    const { data, error } = await client.auth.getSession();
+    return { session: data.session, error };
+  } finally {
+    if (hasAuthCallback) {
+      clearAuthCallbackFromUrl(callbackUrl);
+    }
   }
 }
 
