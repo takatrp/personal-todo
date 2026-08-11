@@ -46,11 +46,14 @@ test("個人向けToDo画面をサーバーレンダリングする", async () =
 });
 
 test("必須機能とレスポンシブ設計をソースに備える", async () => {
-  const [app, css, layout, packageJson] = await Promise.all([
+  const [app, css, layout, packageJson, supabaseClient, schema, pagesConfig] = await Promise.all([
     readFile(new URL("../app/todo-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
+    readFile(new URL("../app/supabase-client.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8"),
+    readFile(new URL("../vite.pages.config.ts", import.meta.url), "utf8"),
   ]);
 
   assert.match(app, /createdAt: previousTask\?\.createdAt \?\? now/);
@@ -197,6 +200,29 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /@media \(max-width: 820px\)/);
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion/);
+  assert.match(app, /signInWithOtp/);
+  assert.match(app, /emailRedirectTo: getTodoAuthRedirectUrl/);
+  assert.match(app, /from\("todo_sync_states"\)/);
+  assert.match(app, /TODO_ATTACHMENT_BUCKET = "todo-attachments"/);
+  assert.match(app, /function mergeByUpdatedAt/);
+  assert.match(app, /function uploadMissingCloudAttachments/);
+  assert.match(app, /totonou-local-owner/);
+  assert.match(app, /CLOUD_REFRESH_INTERVAL_MS/);
+  assert.match(app, /window\.addEventListener\("online"/);
+  assert.match(app, /PC・スマホで同期/);
+  assert.match(app, /ログインリンクを送る/);
+  assert.match(css, /\.cloud-auth-backdrop/);
+  assert.match(css, /\.cloud-sync-button/);
+  assert.match(supabaseClient, /persistSession: true/);
+  assert.match(supabaseClient, /detectSessionInUrl: true/);
+  assert.match(supabaseClient, /GITHUB_PAGES_PATH = "\/personal-todo\/"/);
+  assert.match(schema, /create table if not exists public\.todo_sync_states/);
+  assert.match(schema, /using \(\(select auth\.uid\(\)\) = user_id\)/);
+  assert.match(schema, /with check \(\(select auth\.uid\(\)\) = user_id\)/);
+  assert.match(schema, /values \('todo-attachments', 'todo-attachments', false/);
+  assert.match(schema, /storage\.foldername\(name\)/);
+  assert.match(pagesConfig, /loadEnv\(mode, process\.cwd\(\), "NEXT_PUBLIC_"\)/);
+  assert.match(packageJson, /@supabase\/supabase-js/);
   assert.match(layout, /lang="ja"/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 

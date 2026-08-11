@@ -13,9 +13,15 @@ import {
   useRef,
   useState,
 } from "react";
+import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import "@phosphor-icons/web/regular";
 import "@phosphor-icons/web/bold";
 import "@phosphor-icons/web/fill";
+import {
+  createTodoSupabaseClient,
+  getTodoAuthRedirectUrl,
+  hasTodoSupabaseConfig,
+} from "./supabase-client";
 
 type WebIconProps = HTMLAttributes<HTMLElement> & {
   size?: number | string;
@@ -37,6 +43,7 @@ function createPhosphorIcon(name: string) {
 }
 
 const ArrowCounterClockwise = createPhosphorIcon("arrow-counter-clockwise");
+const ArrowsClockwise = createPhosphorIcon("arrows-clockwise");
 const Bell = createPhosphorIcon("bell");
 const CalendarBlank = createPhosphorIcon("calendar-blank");
 const CaretLeft = createPhosphorIcon("caret-left");
@@ -56,6 +63,7 @@ const PencilSimple = createPhosphorIcon("pencil-simple");
 const Plus = createPhosphorIcon("plus");
 const Repeat = createPhosphorIcon("repeat");
 const SlidersHorizontal = createPhosphorIcon("sliders-horizontal");
+const SignOut = createPhosphorIcon("sign-out");
 const Tag = createPhosphorIcon("tag");
 const Trash = createPhosphorIcon("trash");
 const User = createPhosphorIcon("user");
@@ -74,6 +82,7 @@ type Attachment = {
   type: string;
   size: number;
   data: Blob;
+  storagePath?: string;
 };
 
 type SubTask = {
@@ -195,6 +204,24 @@ type BackupPayload = {
   templates: TodoTemplate[];
 };
 
+type CloudAttachment = Omit<Attachment, "data"> & { storagePath: string };
+type CloudTask = Omit<Task, "attachments"> & { attachments: CloudAttachment[] };
+type CloudPayload = {
+  format: "totonou-todo-cloud";
+  formatVersion: 1;
+  tasks: CloudTask[];
+  tabs: TodoTab[];
+  templates: TodoTemplate[];
+  clientUpdatedAt: string;
+};
+type CloudSnapshot = { tasks: Task[]; tabs: TodoTab[]; templates: TodoTemplate[] };
+type CloudSyncStatus = "local" | "connecting" | "syncing" | "synced" | "error";
+type CloudStateRow = {
+  payload: unknown;
+  revision: number;
+  updated_at: string;
+};
+
 const DB_NAME = "totonou-todo";
 const DB_VERSION = 3;
 const TASK_STORE_NAME = "tasks";
@@ -205,6 +232,10 @@ const MAX_TASK_ATTACHMENT_SIZE = 20 * 1024 * 1024;
 const MAX_BACKUP_FILE_SIZE = 150 * 1024 * 1024;
 const MAX_SUBTASKS = 100;
 const GANTT_DAYS = 14;
+const TODO_ATTACHMENT_BUCKET = "todo-attachments";
+const CLOUD_SYNC_DEBOUNCE_MS = 700;
+const CLOUD_REFRESH_INTERVAL_MS = 20_000;
+const todoSupabase = createTodoSupabaseClient();
 
 const initialForm: TaskForm = {
   title: "",
@@ -375,6 +406,112 @@ function normalizeTab(tab: TodoTab): TodoTab {
   return {
     ...tab,
     sortOrder: Number.isFinite(tab.sortOrder) ? tab.sortOrder : 0,
+  };
+}
+
+function parseCloudPayload(value: unknown): CloudPayload | null {
+  if (!value || typeof value !== "object") return null;
+  const payload = value as Partial<CloudPayload>;
+  if (
+    payload.format !== "totonou-todo-cloud" ||
+    payload.formatVersion !== 1 ||
+    !Array.isArray(payload.tasks) ||
+    !Array.isArray(payload.tabs) ||
+    !Array.isArray(payload.templates)
+  ) return null;
+  return payload as CloudPayload;
+}
+
+function cloudAttachmentPath(userId: string, taskId: string, attachmentId: string) {
+  return `${userId}/${taskId}/${attachmentId}`;
+}
+
+function toCloudPayload(snapshot: CloudSnapshot, clientUpdatedAt = new Date().toISOString()): CloudPayload {
+  return {
+    format: "totonou-todo-cloud",
+    formatVersion: 1,
+    tasks: snapshot.tasks.map((task) => ({
+      ...task,
+      attachments: task.attachments.map(({ data: _data, ...attachment }) => ({
+        ...attachment,
+        storagePath: attachment.storagePath ?? "",
+      })),
+    })),
+    tabs: snapshot.tabs,
+    templates: snapshot.templates,
+    clientUpdatedAt,
+  };
+}
+
+function cloudAttachmentPaths(payload: CloudPayload | null) {
+  return new Set(payload?.tasks.flatMap((task) =>
+    task.attachments.map((attachment) => attachment.storagePath).filter(Boolean),
+  ) ?? []);
+}
+
+function mergeByUpdatedAt<T extends { id: string; updatedAt: string }>(localItems: T[], cloudItems: T[]) {
+  const merged = new Map(cloudItems.map((item) => [item.id, item]));
+  localItems.forEach((localItem) => {
+    const cloudItem = merged.get(localItem.id);
+    if (!cloudItem || localItem.updatedAt.localeCompare(cloudItem.updatedAt) > 0) {
+      merged.set(localItem.id, localItem);
+    }
+  });
+  return [...merged.values()];
+}
+
+function hasWorkspaceData(snapshot: CloudSnapshot) {
+  return snapshot.tasks.length > 0 || snapshot.tabs.length > 0 || snapshot.templates.length > 0;
+}
+
+async function uploadMissingCloudAttachments(
+  client: SupabaseClient,
+  userId: string,
+  tasks: Task[],
+) {
+  let changed = false;
+  const nextTasks: Task[] = [];
+  for (const task of tasks) {
+    const nextAttachments: Attachment[] = [];
+    for (const attachment of task.attachments) {
+      if (attachment.storagePath) {
+        nextAttachments.push(attachment);
+        continue;
+      }
+      const storagePath = cloudAttachmentPath(userId, task.id, attachment.id);
+      const { error } = await client.storage
+        .from(TODO_ATTACHMENT_BUCKET)
+        .upload(storagePath, attachment.data, {
+          contentType: attachment.type,
+          upsert: true,
+        });
+      if (error) throw error;
+      changed = true;
+      nextAttachments.push({ ...attachment, storagePath });
+    }
+    nextTasks.push({ ...task, attachments: nextAttachments });
+  }
+  return { tasks: nextTasks, changed };
+}
+
+async function hydrateCloudTasks(client: SupabaseClient, cloudTasks: CloudTask[]) {
+  return Promise.all(cloudTasks.map(async (cloudTask) => {
+    const attachments = await Promise.all(cloudTask.attachments.map(async (attachment) => {
+      const { data, error } = await client.storage
+        .from(TODO_ATTACHMENT_BUCKET)
+        .download(attachment.storagePath);
+      if (error) throw error;
+      return { ...attachment, data } satisfies Attachment;
+    }));
+    return normalizeTask({ ...cloudTask, attachments } as Task);
+  }));
+}
+
+async function cloudPayloadToSnapshot(client: SupabaseClient, payload: CloudPayload): Promise<CloudSnapshot> {
+  return {
+    tasks: sortTasks(await hydrateCloudTasks(client, payload.tasks)),
+    tabs: sortTabs(payload.tabs.map(normalizeTab)),
+    templates: sortTemplates(payload.templates),
   };
 }
 
@@ -946,6 +1083,16 @@ export function TodoApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tabs, setTabs] = useState<TodoTab[]>([]);
   const [templates, setTemplates] = useState<TodoTemplate[]>([]);
+  const [session, setSession] = useState<Session | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [isCloudReady, setIsCloudReady] = useState(!hasTodoSupabaseConfig());
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>(
+    hasTodoSupabaseConfig() ? "connecting" : "local",
+  );
+  const [lastCloudSyncAt, setLastCloudSyncAt] = useState("");
   const [activeView, setActiveView] = useState<ViewKey>("all");
   const [activeTabId, setActiveTabId] = useState("all");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("list");
@@ -995,6 +1142,58 @@ export function TodoApp() {
   const touchDropTargetRef = useRef<TouchDropTarget | null>(null);
   const dragPreviewRef = useRef<HTMLElement | null>(null);
   const fileDragDepthRef = useRef(0);
+  const isDesignPreviewRef = useRef(false);
+  const authUserIdRef = useRef("");
+  const initialCloudUserRef = useRef("");
+  const applyingCloudSnapshotRef = useRef(false);
+  const cloudSaveRunningRef = useRef(false);
+  const pendingCloudSnapshotRef = useRef<CloudSnapshot | null>(null);
+  const latestCloudSnapshotRef = useRef<CloudSnapshot>({ tasks: [], tabs: [], templates: [] });
+  const lastCloudUpdatedAtRef = useRef("");
+  const lastCloudRevisionRef = useRef(-1);
+  const lastCloudPathsRef = useRef<Set<string>>(new Set());
+  const cloudDirtyRef = useRef(false);
+  const cloudSyncTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const isDesignPreview = new URLSearchParams(window.location.search).get("design-preview") === "1";
+    isDesignPreviewRef.current = isDesignPreview;
+    if (isDesignPreview || !hasTodoSupabaseConfig() || !todoSupabase) {
+      setIsAuthReady(true);
+      setIsCloudReady(true);
+      setCloudSyncStatus("local");
+      return;
+    }
+
+    let active = true;
+    todoSupabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        setAuthMessage("ログイン状態を確認できませんでした。通信環境をご確認ください。");
+        setCloudSyncStatus("error");
+      }
+      authUserIdRef.current = data.session?.user.id ?? "";
+      setSession(data.session);
+      setIsAuthReady(true);
+    });
+    const { data: listener } = todoSupabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!active) return;
+      const previousUserId = authUserIdRef.current;
+      const nextUserId = nextSession?.user.id ?? "";
+      if (previousUserId !== nextUserId) {
+        initialCloudUserRef.current = "";
+        setIsCloudReady(!nextSession);
+        setCloudSyncStatus(nextSession ? "connecting" : "local");
+      }
+      authUserIdRef.current = nextUserId;
+      setSession(nextSession);
+      setIsAuthReady(true);
+    });
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const isDesignPreview = new URLSearchParams(window.location.search).get("design-preview") === "1";
@@ -1033,6 +1232,65 @@ export function TodoApp() {
       })
       .finally(() => setIsLoading(false));
   }, []);
+
+  useEffect(() => {
+    latestCloudSnapshotRef.current = { tasks, tabs, templates };
+  }, [tasks, tabs, templates]);
+
+  useEffect(() => {
+    if (
+      isLoading ||
+      !isAuthReady ||
+      !session ||
+      !todoSupabase ||
+      isDesignPreviewRef.current ||
+      initialCloudUserRef.current === session.user.id
+    ) return;
+    initialCloudUserRef.current = session.user.id;
+    void initializeCloudWorkspace(session);
+  }, [isAuthReady, isLoading, session]);
+
+  useEffect(() => {
+    if (applyingCloudSnapshotRef.current) {
+      applyingCloudSnapshotRef.current = false;
+      return;
+    }
+    if (
+      !session ||
+      !todoSupabase ||
+      !isCloudReady ||
+      isLoading ||
+      isDesignPreviewRef.current
+    ) return;
+    cloudDirtyRef.current = true;
+    if (cloudSyncTimerRef.current !== null) window.clearTimeout(cloudSyncTimerRef.current);
+    cloudSyncTimerRef.current = window.setTimeout(() => {
+      cloudSyncTimerRef.current = null;
+      queueCloudSnapshot({ tasks, tabs, templates });
+    }, CLOUD_SYNC_DEBOUNCE_MS);
+    return () => {
+      if (cloudSyncTimerRef.current !== null) window.clearTimeout(cloudSyncTimerRef.current);
+    };
+  }, [isCloudReady, isLoading, session, tasks, tabs, templates]);
+
+  useEffect(() => {
+    if (!session || !todoSupabase || !isCloudReady || isDesignPreviewRef.current) return;
+    const refresh = () => void refreshCloudWorkspace(session.user.id);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const handleOnline = () => queueCloudSnapshot(latestCloudSnapshotRef.current);
+    const interval = window.setInterval(refresh, CLOUD_REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", handleOnline);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [isCloudReady, session]);
 
   useEffect(() => {
     if (!isFormOpen) return;
@@ -1240,6 +1498,351 @@ export function TodoApp() {
     (total, task) => total + task.attachments.length,
     0,
   ), [tasks]);
+
+  async function readCloudState(userId: string) {
+    if (!todoSupabase) throw new Error("Supabase is not configured");
+    const { data, error } = await todoSupabase
+      .from("todo_sync_states")
+      .select("payload, revision, updated_at")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) throw error;
+    return data as CloudStateRow | null;
+  }
+
+  async function applyCloudSnapshot(
+    snapshot: CloudSnapshot,
+    userId: string,
+    updatedAt: string,
+    revision: number,
+    paths: Set<string>,
+  ) {
+    const normalizedSnapshot: CloudSnapshot = {
+      tasks: sortTasks(snapshot.tasks.map(normalizeTask)),
+      tabs: sortTabs(snapshot.tabs.map(normalizeTab)),
+      templates: sortTemplates(snapshot.templates),
+    };
+    await writeWorkspace(
+      normalizedSnapshot.tasks,
+      normalizedSnapshot.tabs,
+      normalizedSnapshot.templates,
+      "replace",
+    );
+    applyingCloudSnapshotRef.current = true;
+    latestCloudSnapshotRef.current = normalizedSnapshot;
+    lastCloudUpdatedAtRef.current = updatedAt;
+    lastCloudRevisionRef.current = revision;
+    lastCloudPathsRef.current = paths;
+    cloudDirtyRef.current = false;
+    window.localStorage.setItem("totonou-local-owner", userId);
+    window.localStorage.setItem(`totonou-cloud-linked-${userId}`, "1");
+    setTasks(normalizedSnapshot.tasks);
+    setTabs(normalizedSnapshot.tabs);
+    setTemplates(normalizedSnapshot.templates);
+    setLastCloudSyncAt(updatedAt);
+    setCloudSyncStatus("synced");
+    setIsCloudReady(true);
+  }
+
+  async function persistCloudSnapshot(
+    activeSession: Session,
+    snapshot: CloudSnapshot,
+    allowConflictRetry = true,
+  ): Promise<void> {
+    if (!todoSupabase) throw new Error("Supabase is not configured");
+    const userId = activeSession.user.id;
+    const uploaded = await uploadMissingCloudAttachments(todoSupabase, userId, snapshot.tasks);
+    const uploadedSnapshot = { ...snapshot, tasks: uploaded.tasks };
+    const payload = toCloudPayload(uploadedSnapshot);
+    const previousPaths = lastCloudPathsRef.current;
+    let savedRow: CloudStateRow | null = null;
+
+    if (lastCloudRevisionRef.current < 0) {
+      const { data, error } = await todoSupabase
+        .from("todo_sync_states")
+        .insert({ user_id: userId, payload })
+        .select("payload, revision, updated_at")
+        .single();
+      if (error) {
+        if (allowConflictRetry && error.code === "23505") {
+          const currentRow = await readCloudState(userId);
+          if (!currentRow) throw error;
+          const currentPayload = parseCloudPayload(currentRow.payload);
+          if (!currentPayload) throw new Error("クラウドデータの形式を確認できませんでした");
+          const cloudSnapshot = await cloudPayloadToSnapshot(todoSupabase, currentPayload);
+          const mergedSnapshot: CloudSnapshot = {
+            tasks: sortTasks(mergeByUpdatedAt(uploadedSnapshot.tasks, cloudSnapshot.tasks)),
+            tabs: sortTabs(mergeByUpdatedAt(uploadedSnapshot.tabs, cloudSnapshot.tabs)),
+            templates: sortTemplates(mergeByUpdatedAt(uploadedSnapshot.templates, cloudSnapshot.templates)),
+          };
+          await applyCloudSnapshot(
+            mergedSnapshot,
+            userId,
+            currentRow.updated_at,
+            currentRow.revision,
+            cloudAttachmentPaths(currentPayload),
+          );
+          return persistCloudSnapshot(activeSession, mergedSnapshot, false);
+        }
+        throw error;
+      }
+      savedRow = data as CloudStateRow;
+    } else {
+      const { data, error } = await todoSupabase
+        .from("todo_sync_states")
+        .update({ payload })
+        .eq("user_id", userId)
+        .eq("revision", lastCloudRevisionRef.current)
+        .select("payload, revision, updated_at")
+        .maybeSingle();
+      if (error) throw error;
+      savedRow = data as CloudStateRow | null;
+    }
+
+    if (!savedRow) {
+      if (!allowConflictRetry) throw new Error("別の端末で更新されたため同期できませんでした");
+      const currentRow = await readCloudState(userId);
+      if (!currentRow) {
+        lastCloudRevisionRef.current = -1;
+        return persistCloudSnapshot(activeSession, uploadedSnapshot, false);
+      }
+      const currentPayload = parseCloudPayload(currentRow.payload);
+      if (!currentPayload) throw new Error("クラウドデータの形式を確認できませんでした");
+      const cloudSnapshot = await cloudPayloadToSnapshot(todoSupabase, currentPayload);
+      const mergedSnapshot: CloudSnapshot = {
+        tasks: sortTasks(mergeByUpdatedAt(uploadedSnapshot.tasks, cloudSnapshot.tasks)),
+        tabs: sortTabs(mergeByUpdatedAt(uploadedSnapshot.tabs, cloudSnapshot.tabs)),
+        templates: sortTemplates(mergeByUpdatedAt(uploadedSnapshot.templates, cloudSnapshot.templates)),
+      };
+      await applyCloudSnapshot(
+        mergedSnapshot,
+        userId,
+        currentRow.updated_at,
+        currentRow.revision,
+        cloudAttachmentPaths(currentPayload),
+      );
+      return persistCloudSnapshot(activeSession, mergedSnapshot, false);
+    }
+
+    const nextPaths = cloudAttachmentPaths(payload);
+    const removedPaths = [...previousPaths].filter((path) =>
+      path.startsWith(`${userId}/`) && !nextPaths.has(path),
+    );
+    if (removedPaths.length > 0) {
+      const { error } = await todoSupabase.storage.from(TODO_ATTACHMENT_BUCKET).remove(removedPaths);
+      if (error) throw error;
+    }
+
+    lastCloudUpdatedAtRef.current = savedRow.updated_at;
+    lastCloudRevisionRef.current = savedRow.revision;
+    lastCloudPathsRef.current = nextPaths;
+    window.localStorage.setItem("totonou-local-owner", userId);
+    window.localStorage.setItem(`totonou-cloud-linked-${userId}`, "1");
+    setLastCloudSyncAt(savedRow.updated_at);
+    setCloudSyncStatus("synced");
+    setAuthMessage("");
+    setIsCloudReady(true);
+
+    const latest = latestCloudSnapshotRef.current;
+    if (
+      uploaded.changed &&
+      latest.tasks === snapshot.tasks &&
+      latest.tabs === snapshot.tabs &&
+      latest.templates === snapshot.templates
+    ) {
+      await writeWorkspace(uploadedSnapshot.tasks, uploadedSnapshot.tabs, uploadedSnapshot.templates, "replace");
+      applyingCloudSnapshotRef.current = true;
+      latestCloudSnapshotRef.current = uploadedSnapshot;
+      setTasks(uploadedSnapshot.tasks);
+    }
+  }
+
+  async function initializeCloudWorkspace(activeSession: Session): Promise<void> {
+    if (!todoSupabase) return;
+    const userId = activeSession.user.id;
+    setCloudSyncStatus("connecting");
+    setIsCloudReady(false);
+    setAuthMessage("");
+    try {
+      const storedOwner = window.localStorage.getItem("totonou-local-owner");
+      let localSnapshot = latestCloudSnapshotRef.current;
+      if (storedOwner && storedOwner !== userId) {
+        localSnapshot = { tasks: [], tabs: [], templates: [] };
+        await writeWorkspace([], [], [], "replace");
+        applyingCloudSnapshotRef.current = true;
+        latestCloudSnapshotRef.current = localSnapshot;
+        setTasks([]);
+        setTabs([]);
+        setTemplates([]);
+      }
+
+      const cloudRow = await readCloudState(userId);
+      if (!cloudRow) {
+        lastCloudRevisionRef.current = -1;
+        lastCloudUpdatedAtRef.current = "";
+        lastCloudPathsRef.current = new Set();
+        await persistCloudSnapshot(activeSession, localSnapshot);
+        return;
+      }
+
+      const cloudPayload = parseCloudPayload(cloudRow.payload);
+      if (!cloudPayload) throw new Error("クラウドデータの形式を確認できませんでした");
+      const cloudSnapshot = await cloudPayloadToSnapshot(todoSupabase, cloudPayload);
+      lastCloudRevisionRef.current = cloudRow.revision;
+      lastCloudUpdatedAtRef.current = cloudRow.updated_at;
+      lastCloudPathsRef.current = cloudAttachmentPaths(cloudPayload);
+      const hasLinkedBefore = window.localStorage.getItem(`totonou-cloud-linked-${userId}`) === "1";
+
+      if (!hasLinkedBefore && hasWorkspaceData(localSnapshot)) {
+        const mergedSnapshot: CloudSnapshot = {
+          tasks: sortTasks(mergeByUpdatedAt(localSnapshot.tasks, cloudSnapshot.tasks)),
+          tabs: sortTabs(mergeByUpdatedAt(localSnapshot.tabs, cloudSnapshot.tabs)),
+          templates: sortTemplates(mergeByUpdatedAt(localSnapshot.templates, cloudSnapshot.templates)),
+        };
+        await applyCloudSnapshot(
+          mergedSnapshot,
+          userId,
+          cloudRow.updated_at,
+          cloudRow.revision,
+          cloudAttachmentPaths(cloudPayload),
+        );
+        await persistCloudSnapshot(activeSession, mergedSnapshot);
+      } else {
+        await applyCloudSnapshot(
+          cloudSnapshot,
+          userId,
+          cloudRow.updated_at,
+          cloudRow.revision,
+          cloudAttachmentPaths(cloudPayload),
+        );
+      }
+    } catch (error) {
+      console.error("Cloud initialization failed", error);
+      setCloudSyncStatus("error");
+      setIsCloudReady(true);
+      setAuthMessage("クラウド同期を開始できませんでした。Supabaseの設定と通信環境をご確認ください。");
+    }
+  }
+
+  async function flushCloudQueue(): Promise<boolean> {
+    if (cloudSaveRunningRef.current || !session || !todoSupabase) return false;
+    cloudSaveRunningRef.current = true;
+    setCloudSyncStatus("syncing");
+    try {
+      while (pendingCloudSnapshotRef.current) {
+        const snapshot = pendingCloudSnapshotRef.current;
+        pendingCloudSnapshotRef.current = null;
+        await persistCloudSnapshot(session, snapshot);
+      }
+      cloudDirtyRef.current = false;
+      return true;
+    } catch (error) {
+      console.error("Cloud save failed", error);
+      pendingCloudSnapshotRef.current = latestCloudSnapshotRef.current;
+      setCloudSyncStatus("error");
+      setAuthMessage("クラウドへ保存できませんでした。端末内には保存されています。再同期してください。");
+      return false;
+    } finally {
+      cloudSaveRunningRef.current = false;
+    }
+  }
+
+  function queueCloudSnapshot(snapshot: CloudSnapshot) {
+    pendingCloudSnapshotRef.current = snapshot;
+    cloudDirtyRef.current = true;
+    void flushCloudQueue();
+  }
+
+  async function refreshCloudWorkspace(userId: string) {
+    if (
+      !todoSupabase ||
+      cloudSaveRunningRef.current ||
+      pendingCloudSnapshotRef.current ||
+      cloudDirtyRef.current ||
+      cloudSyncTimerRef.current !== null
+    ) return;
+    try {
+      const cloudRow = await readCloudState(userId);
+      if (!cloudRow || cloudRow.revision <= lastCloudRevisionRef.current) return;
+      const cloudPayload = parseCloudPayload(cloudRow.payload);
+      if (!cloudPayload) throw new Error("クラウドデータの形式を確認できませんでした");
+      const cloudSnapshot = await cloudPayloadToSnapshot(todoSupabase, cloudPayload);
+      await applyCloudSnapshot(
+        cloudSnapshot,
+        userId,
+        cloudRow.updated_at,
+        cloudRow.revision,
+        cloudAttachmentPaths(cloudPayload),
+      );
+      setNotice("別の端末での更新を反映しました");
+    } catch (error) {
+      console.error("Cloud refresh failed", error);
+      setCloudSyncStatus("error");
+    }
+  }
+
+  async function handleCloudLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!todoSupabase || !authEmail.trim() || isAuthSubmitting) return;
+    setIsAuthSubmitting(true);
+    setAuthMessage("");
+    try {
+      const { error } = await todoSupabase.auth.signInWithOtp({
+        email: authEmail.trim(),
+        options: {
+          emailRedirectTo: getTodoAuthRedirectUrl(),
+          shouldCreateUser: true,
+        },
+      });
+      if (error) throw error;
+      setAuthMessage("ログイン用メールを送りました。メール内のリンクを開いてください。");
+    } catch (error) {
+      console.error("Magic link sign-in failed", error);
+      setAuthMessage("ログイン用メールを送れませんでした。メールアドレスと通信環境をご確認ください。");
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  }
+
+  async function handleCloudSignOut() {
+    if (!todoSupabase || !session) return;
+    pendingCloudSnapshotRef.current = latestCloudSnapshotRef.current;
+    const saved = await flushCloudQueue();
+    if (!saved) {
+      setAuthMessage("未同期の変更があるためログアウトを中止しました。通信環境を確認して再同期してください。");
+      setNotice("未同期の変更があるため、ログアウトを中止しました");
+      return;
+    }
+    const { error } = await todoSupabase.auth.signOut();
+    if (error) {
+      setAuthMessage("ログアウトできませんでした。もう一度お試しください。");
+      return;
+    }
+    await writeWorkspace([], [], [], "replace");
+    applyingCloudSnapshotRef.current = true;
+    latestCloudSnapshotRef.current = { tasks: [], tabs: [], templates: [] };
+    lastCloudUpdatedAtRef.current = "";
+    lastCloudRevisionRef.current = -1;
+    lastCloudPathsRef.current = new Set();
+    cloudDirtyRef.current = false;
+    window.localStorage.removeItem("totonou-local-owner");
+    setTasks([]);
+    setTabs([]);
+    setTemplates([]);
+    setLastCloudSyncAt("");
+    setAuthEmail("");
+    setAuthMessage("");
+  }
+
+  function retryCloudSync() {
+    if (!session) return;
+    if (lastCloudRevisionRef.current < 0) {
+      initialCloudUserRef.current = session.user.id;
+      void initializeCloudWorkspace(session);
+      return;
+    }
+    queueCloudSnapshot(latestCloudSnapshotRef.current);
+  }
 
   function switchDisplayMode(mode: DisplayMode) {
     setDisplayMode(mode);
@@ -2735,9 +3338,70 @@ export function TodoApp() {
     : search
     ? "検索に一致するToDoがありません"
     : `${sectionTitle}はありません`;
+  const cloudSyncLabel = cloudSyncStatus === "connecting"
+    ? "接続中"
+    : cloudSyncStatus === "syncing"
+      ? "同期中"
+      : cloudSyncStatus === "synced"
+        ? "同期済み"
+        : cloudSyncStatus === "error"
+          ? "同期エラー"
+          : "端末内のみ";
+  const cloudSyncDetail = lastCloudSyncAt
+    ? `${new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" }).format(new Date(lastCloudSyncAt))} 更新`
+    : cloudSyncLabel;
+  const showCloudGate = hasTodoSupabaseConfig() && !isDesignPreviewRef.current && (
+    !isAuthReady || !session || (!isCloudReady && cloudSyncStatus !== "error")
+  );
 
   return (
     <div className={dragStatus ? "app-shell is-dragging" : "app-shell"}>
+      {showCloudGate && (
+        <div className="cloud-auth-backdrop">
+          <section className="cloud-auth-card" role="dialog" aria-modal="true" aria-labelledby="cloud-auth-title">
+            <span className="cloud-auth-mark" aria-hidden="true">と</span>
+            {!isAuthReady ? (
+              <>
+                <p className="eyebrow">CLOUD SYNC</p>
+                <h2 id="cloud-auth-title">クラウドへ接続しています</h2>
+                <p>ログイン状態を確認しています。少しお待ちください。</p>
+                <span className="cloud-auth-progress" aria-label="読み込み中" />
+              </>
+            ) : !session ? (
+              <>
+                <p className="eyebrow">PC・スマホで同期</p>
+                <h2 id="cloud-auth-title">同じToDoを、どの端末でも</h2>
+                <p>同じメールアドレスでログインすると、ToDo・タブ・子ToDo・添付を安全に同期できます。</p>
+                <form className="cloud-auth-form" onSubmit={(event) => void handleCloudLogin(event)}>
+                  <label htmlFor="cloud-auth-email">メールアドレス</label>
+                  <input
+                    id="cloud-auth-email"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    placeholder="name@example.com"
+                    value={authEmail}
+                    onChange={(event) => setAuthEmail(event.target.value)}
+                    required
+                  />
+                  <button className="primary-button" type="submit" disabled={isAuthSubmitting || !authEmail.trim()}>
+                    {isAuthSubmitting ? "送信中…" : "ログインリンクを送る"}
+                  </button>
+                </form>
+                <small>パスワードは不要です。届いたメールのリンクを開くだけでログインできます。</small>
+              </>
+            ) : (
+              <>
+                <p className="eyebrow">CLOUD SYNC</p>
+                <h2 id="cloud-auth-title">ToDoを同期しています</h2>
+                <p>この端末のデータとクラウドを安全にまとめています。</p>
+                <span className="cloud-auth-progress" aria-label="同期中" />
+              </>
+            )}
+            {authMessage && <p className="cloud-auth-message" role="status">{authMessage}</p>}
+          </section>
+        </div>
+      )}
       <aside className="sidebar" aria-label="ToDoの表示切替">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">と</span>
@@ -2775,8 +3439,8 @@ export function TodoApp() {
           <div className="sidebar-profile">
             <span className="sidebar-profile-icon"><User size={19} /></span>
             <div>
-              <strong>個人利用</strong>
-              <span>この端末に保存</span>
+              <strong>{session ? "クラウド同期" : "個人利用"}</strong>
+              <span>{session ? cloudSyncDetail : "この端末に保存"}</span>
             </div>
           </div>
         </div>
@@ -2790,6 +3454,18 @@ export function TodoApp() {
               <span>毎日の仕事を、軽やかに。</span>
             </div>
             <div className="header-actions">
+              {session && (
+                <button
+                  className={`cloud-sync-button status-${cloudSyncStatus}`}
+                  type="button"
+                  onClick={retryCloudSync}
+                  aria-label={`${cloudSyncLabel}。クリックして再同期`}
+                  title={session.user.email ?? "クラウド同期"}
+                >
+                  <ArrowsClockwise size={17} weight="bold" />
+                  <span>{cloudSyncLabel}</span>
+                </button>
+              )}
               {activeView !== "trash" && (
                 <button className="primary-button desktop-create" type="button" onClick={openCreateForm}>
                   <Plus size={19} weight="bold" /> ToDoを追加
@@ -2801,6 +3477,7 @@ export function TodoApp() {
                   <button type="button" onClick={openTabManager}><Plus size={17} /> タブを管理</button>
                   <button type="button" onClick={() => setIsDataManagerOpen(true)}><Database size={17} /> データ管理</button>
                   <button type="button" onClick={() => setActiveView("trash")}><Trash size={17} /> ゴミ箱</button>
+                  {session && <button type="button" onClick={() => void handleCloudSignOut()}><SignOut size={17} /> ログアウト</button>}
                 </div>
               </details>
             </div>
@@ -2988,6 +3665,12 @@ export function TodoApp() {
           {storageError && (
             <div className="error-banner" role="alert">
               端末内の保存領域を利用できません。ブラウザのプライベートモードや保存設定をご確認ください。
+            </div>
+          )}
+          {session && cloudSyncStatus === "error" && (
+            <div className="error-banner cloud-error-banner" role="alert">
+              <span>{authMessage || "クラウド同期でエラーが発生しました。端末内のデータは引き続き利用できます。"}</span>
+              <button type="button" onClick={retryCloudSync}>再同期</button>
             </div>
           )}
           {!isLoading && visibleTasks.length > 0 && effectiveDisplayMode === "kanban" && (
@@ -4102,8 +4785,22 @@ export function TodoApp() {
             </header>
             <div className="data-manager-content">
               <p className="data-manager-lead">
-                現在はこの端末だけに保存しています。バックアップにはToDo・タブ・ゴミ箱・添付・テンプレートがすべて含まれます。
+                {session
+                  ? `クラウドと自動同期しています（${cloudSyncDetail}）。バックアップにはToDo・タブ・ゴミ箱・添付・テンプレートがすべて含まれます。`
+                  : "現在はこの端末だけに保存しています。バックアップにはToDo・タブ・ゴミ箱・添付・テンプレートがすべて含まれます。"}
               </p>
+
+              {session && (
+                <section className={`data-panel cloud-data-panel status-${cloudSyncStatus}`}>
+                  <div>
+                    <strong>PC・スマホ同期：{cloudSyncLabel}</strong>
+                    <p>{session.user.email} でログイン中。変更は端末内へ先に保存し、その後クラウドへ送ります。</p>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={retryCloudSync}>
+                    今すぐ同期
+                  </button>
+                </section>
+              )}
 
               <div className="storage-summary" aria-label="保存状況">
                 <span><strong>{activeTaskCount}</strong><small>使用中ToDo</small></span>

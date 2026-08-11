@@ -5158,3 +5158,218 @@ body {
     transition: none;
   }
 }
+
+/* Supabase login and cross-device sync */
+.cloud-auth-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 50% 12%, rgba(126, 127, 244, 0.22), transparent 28rem),
+    rgba(29, 37, 56, 0.84);
+  backdrop-filter: blur(10px);
+}
+
+.cloud-auth-card {
+  display: grid;
+  width: min(100%, 460px);
+  gap: 14px;
+  padding: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 30px 90px rgba(15, 20, 35, 0.32);
+  animation: rise-in 180ms ease-out;
+}
+
+.cloud-auth-mark {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(145deg, #7778f1, #5e5fdd);
+  box-shadow: 0 12px 28px rgba(70, 71, 190, 0.24);
+  font-family: "Yu Mincho", serif;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.cloud-auth-card h2,
+.cloud-auth-card p {
+  margin: 0;
+}
+
+.cloud-auth-card h2 {
+  font-size: clamp(23px, 5vw, 30px);
+  letter-spacing: -0.035em;
+}
+
+.cloud-auth-card > p:not(.eyebrow):not(.cloud-auth-message) {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.cloud-auth-card > small {
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.cloud-auth-form {
+  display: grid;
+  gap: 9px;
+  margin-top: 5px;
+}
+
+.cloud-auth-form label {
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.cloud-auth-form input {
+  width: 100%;
+  min-height: 50px;
+  padding: 0 14px;
+  border: 1px solid #dcdad5;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.cloud-auth-form input:focus {
+  border-color: var(--primary);
+}
+
+.cloud-auth-form .primary-button {
+  width: 100%;
+  margin-top: 3px;
+}
+
+.cloud-auth-message {
+  padding: 11px 13px;
+  border-radius: 10px;
+  color: #4b4c9f;
+  background: var(--primary-soft);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.cloud-auth-progress {
+  width: 34px;
+  height: 34px;
+  margin-top: 8px;
+  border: 3px solid #e4e3fb;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: cloud-spin 800ms linear infinite;
+}
+
+@keyframes cloud-spin {
+  to { transform: rotate(360deg); }
+}
+
+.cloud-sync-button {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: 1px solid #dcdad5;
+  border-radius: 11px;
+  color: #656b79;
+  background: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cloud-sync-button:hover {
+  border-color: #c8c7ef;
+  color: var(--primary-dark);
+  background: #faf9ff;
+}
+
+.cloud-sync-button.status-synced {
+  border-color: #cfe3d6;
+  color: #3d765b;
+  background: #f3faf6;
+}
+
+.cloud-sync-button.status-syncing svg,
+.cloud-sync-button.status-connecting svg {
+  animation: cloud-spin 800ms linear infinite;
+}
+
+.cloud-sync-button.status-error,
+.cloud-data-panel.status-error {
+  border-color: #efc7ca;
+  color: #a8454d;
+  background: #fff7f7;
+}
+
+.cloud-data-panel {
+  border-color: #d8d7ef;
+  background: #faf9ff;
+}
+
+.cloud-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.cloud-error-banner button {
+  min-height: 36px;
+  flex: 0 0 auto;
+  padding: 0 13px;
+  border: 1px solid #d78e94;
+  border-radius: 9px;
+  color: #963d45;
+  background: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+@media (max-width: 620px) {
+  .cloud-auth-backdrop {
+    align-items: end;
+    padding: 10px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .cloud-auth-card {
+    padding: 27px 22px;
+    border-radius: 22px;
+  }
+
+  .cloud-sync-button {
+    width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .cloud-sync-button span {
+    display: none;
+  }
+
+  .cloud-error-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cloud-auth-progress,
+  .cloud-sync-button.status-syncing svg,
+  .cloud-sync-button.status-connecting svg {
+    animation-duration: 2s;
+  }
+}
