@@ -224,6 +224,11 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(supabaseClient, /client\.auth\.setSession/);
   assert.match(supabaseClient, /client\.auth\.exchangeCodeForSession/);
   assert.match(supabaseClient, /window\.history\.replaceState/);
+  assert.match(supabaseClient, /createResilientAuthStorage/);
+  assert.match(supabaseClient, /totonou-todo-auth/);
+  assert.match(supabaseClient, /authMemoryStorage/);
+  assert.match(supabaseClient, /window\.localStorage\.setItem/);
+  assert.match(supabaseClient, /writeAuthStorage/);
   assert.match(app, /resolveTodoInitialSession\(todoSupabase\)/);
   assert.match(supabaseClient, /GITHUB_PAGES_PATH = "\/personal-todo\/"/);
   assert.match(schema, /create table if not exists public\.todo_sync_states/);
