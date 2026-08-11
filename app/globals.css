@@ -5265,7 +5265,7 @@ body {
   background: #fff0f1;
 }
 
-.otp-login-guide {
+.safari-login-guide {
   display: grid;
   gap: 8px;
   padding: 13px 14px;
@@ -5275,34 +5275,24 @@ body {
   background: #faf9ff;
 }
 
-.otp-login-guide strong {
+.safari-login-guide strong {
   color: #45469c;
   font-size: 11px;
 }
 
-.otp-login-guide p {
+.safari-login-guide ol {
+  display: grid;
+  gap: 5px;
   margin: 0;
+  padding-left: 20px;
   font-size: 11px;
   line-height: 1.65;
 }
 
-.otp-login-guide button {
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  color: var(--primary);
-  background: transparent;
-  font-size: 10px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.cloud-auth-form .cloud-auth-otp {
-  text-align: center;
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: 0.28em;
-  font-variant-numeric: tabular-nums;
+.safari-login-guide small {
+  color: #777c8b;
+  font-size: 9.5px;
+  line-height: 1.65;
 }
 
 .cloud-auth-progress {
