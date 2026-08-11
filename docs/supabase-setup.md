@@ -37,17 +37,18 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 
 `NEXT_PUBLIC_` の値は静的なGitHub Pages用JavaScriptにも含まれます。publishable keyはブラウザ利用を前提としたキーですが、secret keyやservice role keyは絶対に設定・コミットしないでください。データ保護はRow Level Securityで行います。
 
-## 4. メールリンク認証を設定する
+## 4. メールOTP認証を設定する
 
-Supabase DashboardのAuthenticationでEmail providerを有効にし、Redirect URLsへ次を追加します。
+Supabase DashboardのAuthenticationでEmail providerを有効にします。続いて、Authentication → Emails → TemplatesのMagic Linkテンプレートを、リンクではなく6桁コードを表示する内容へ変更します。
 
-```text
-http://localhost:3000/
-https://takatrp.github.io/personal-todo/
+```html
+<h2>ととのうToDo ログインコード</h2>
+<p>次の6桁コードをToDo画面へ入力してください。</p>
+<p style="font-size: 28px; font-weight: bold; letter-spacing: 0.2em;">{{ .Token }}</p>
+<p>このコードを他の人へ共有しないでください。</p>
 ```
 
-`app/supabase-client.ts` の `getMagicLinkRedirectUrl()` は、GitHub Pagesではクエリ文字列とハッシュを除き、必ず `/personal-todo/` へ戻します。
-公開先を `/junkai-junbi/` など別のパスへ変更する場合は、この関数とSupabase側のRedirect URLを同時に変更してください。
+`{{ .ConfirmationURL }}` をテンプレートから外し、`{{ .Token }}` を含めることで、リンクではなくOTPコードが送られます。アプリは `verifyOtp()` でコードを検証します。iPhoneのメールアプリによるリンクプレビューでワンタイムリンクが先に消費される問題も回避できます。
 
 ## 5. 同期時のデータ構造
 

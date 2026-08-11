@@ -19,7 +19,6 @@ import "@phosphor-icons/web/bold";
 import "@phosphor-icons/web/fill";
 import {
   createTodoSupabaseClient,
-  getTodoAuthRedirectUrl,
   hasTodoSupabaseConfig,
   resolveTodoInitialSession,
 } from "./supabase-client";
@@ -1088,6 +1087,7 @@ export function TodoApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
+  const [authOtp, setAuthOtp] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authDeliveryState, setAuthDeliveryState] = useState<AuthDeliveryState>("idle");
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
@@ -1794,15 +1794,15 @@ export function TodoApp() {
       const { error } = await todoSupabase.auth.signInWithOtp({
         email: authEmail.trim(),
         options: {
-          emailRedirectTo: getTodoAuthRedirectUrl(),
           shouldCreateUser: true,
         },
       });
       if (error) throw error;
       setAuthDeliveryState("sent");
-      setAuthMessage("ログイン用メールを送りました。最新のメールにあるリンクを1回だけ使用してください。");
+      setAuthOtp("");
+      setAuthMessage("6桁のログインコードを送りました。最新のメールをご確認ください。");
     } catch (error) {
-      console.error("Magic link sign-in failed", error);
+      console.error("Email OTP sign-in failed", error);
       const authError = error as { status?: number; code?: string };
       if (authError.status === 429 || authError.code === "over_email_send_rate_limit") {
         setAuthDeliveryState("rate-limited");
@@ -1811,6 +1811,33 @@ export function TodoApp() {
         setAuthDeliveryState("error");
         setAuthMessage("ログイン用メールを送れませんでした。メールアドレスと通信環境をご確認ください。");
       }
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  }
+
+  async function handleCloudOtpVerification(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!todoSupabase || !authEmail.trim() || authOtp.length !== 6 || isAuthSubmitting) return;
+    setIsAuthSubmitting(true);
+    setAuthMessage("");
+    try {
+      const { data, error } = await todoSupabase.auth.verifyOtp({
+        email: authEmail.trim(),
+        token: authOtp,
+        type: "email",
+      });
+      if (error) throw error;
+      if (!data.session) throw new Error("Session was not created");
+      authUserIdRef.current = data.session.user.id;
+      setSession(data.session);
+      setIsAuthReady(true);
+      setAuthDeliveryState("idle");
+      setAuthOtp("");
+    } catch (error) {
+      console.error("Email OTP verification failed", error);
+      setAuthDeliveryState("error");
+      setAuthMessage("コードが違うか、有効期限が切れています。最新メールの6桁コードをご確認ください。");
     } finally {
       setIsAuthSubmitting(false);
     }
@@ -1843,6 +1870,7 @@ export function TodoApp() {
     setTemplates([]);
     setLastCloudSyncAt("");
     setAuthEmail("");
+    setAuthOtp("");
     setAuthMessage("");
     setAuthDeliveryState("idle");
   }
@@ -3385,38 +3413,68 @@ export function TodoApp() {
                 <p className="eyebrow">PC・スマホで同期</p>
                 <h2 id="cloud-auth-title">同じToDoを、どの端末でも</h2>
                 <p>同じメールアドレスでログインすると、ToDo・タブ・子ToDo・添付を安全に同期できます。</p>
-                <form className="cloud-auth-form" onSubmit={(event) => void handleCloudLogin(event)}>
-                  <label htmlFor="cloud-auth-email">メールアドレス</label>
-                  <input
-                    id="cloud-auth-email"
-                    type="email"
-                    inputMode="email"
-                    autoComplete="email"
-                    placeholder="name@example.com"
-                    value={authEmail}
-                    onChange={(event) => {
-                      setAuthEmail(event.target.value);
-                      if (authDeliveryState !== "idle") {
-                        setAuthDeliveryState("idle");
-                        setAuthMessage("");
-                      }
-                    }}
-                    required
-                  />
-                  <button className="primary-button" type="submit" disabled={isAuthSubmitting || !authEmail.trim()}>
-                    {isAuthSubmitting ? "送信中…" : "ログインリンクを送る"}
-                  </button>
-                </form>
-                <small>パスワードは不要です。届いたメールのリンクを開くだけでログインできます。</small>
-                {(authDeliveryState === "sent" || authDeliveryState === "rate-limited") && (
-                  <aside className="safari-login-guide" aria-label="Safariでログインする方法">
-                    <strong>iPhoneでSafariを使う場合</strong>
-                    <ol>
-                      <li>Gmail内のログインリンクをタップせず、長押しして「リンクをコピー」</li>
-                      <li>Safariを開き、アドレス欄へ貼り付けて移動</li>
-                    </ol>
-                    <small>リンクは1回だけ有効です。Arc Searchなどで一度開いたリンクは、Safariでは再利用できません。</small>
-                  </aside>
+                {authDeliveryState === "sent" ? (
+                  <>
+                    <form className="cloud-auth-form" onSubmit={(event) => void handleCloudOtpVerification(event)}>
+                      <label htmlFor="cloud-auth-otp">メールに届いた6桁コード</label>
+                      <input
+                        id="cloud-auth-otp"
+                        className="cloud-auth-otp"
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        pattern="[0-9]{6}"
+                        maxLength={6}
+                        placeholder="123456"
+                        value={authOtp}
+                        onChange={(event) => setAuthOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                        required
+                      />
+                      <button className="primary-button" type="submit" disabled={isAuthSubmitting || authOtp.length !== 6}>
+                        {isAuthSubmitting ? "確認中…" : "コードでログイン"}
+                      </button>
+                    </form>
+                    <aside className="otp-login-guide" aria-label="ログインコードの確認方法">
+                      <strong>リンクを開く必要はありません</strong>
+                      <p>Gmailの本文に表示された6桁の数字を、この画面へ入力してください。</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthDeliveryState("idle");
+                          setAuthOtp("");
+                          setAuthMessage("");
+                        }}
+                      >
+                        メールアドレスを変更
+                      </button>
+                    </aside>
+                  </>
+                ) : (
+                  <>
+                    <form className="cloud-auth-form" onSubmit={(event) => void handleCloudLogin(event)}>
+                      <label htmlFor="cloud-auth-email">メールアドレス</label>
+                      <input
+                        id="cloud-auth-email"
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        placeholder="name@example.com"
+                        value={authEmail}
+                        onChange={(event) => {
+                          setAuthEmail(event.target.value);
+                          if (authDeliveryState !== "idle") {
+                            setAuthDeliveryState("idle");
+                            setAuthMessage("");
+                          }
+                        }}
+                        required
+                      />
+                      <button className="primary-button" type="submit" disabled={isAuthSubmitting || !authEmail.trim()}>
+                        {isAuthSubmitting ? "送信中…" : "6桁コードを送る"}
+                      </button>
+                    </form>
+                    <small>パスワードやリンク操作は不要です。メールに届く6桁コードでログインできます。</small>
+                  </>
                 )}
               </>
             ) : (
