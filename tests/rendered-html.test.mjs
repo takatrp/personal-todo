@@ -70,7 +70,7 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.time-toggle/);
   assert.match(app, /依頼元/);
   assert.match(app, /依頼先/);
-  assert.match(app, /ファイル添付/);
+  assert.match(app, /添付ファイル/);
   assert.match(app, /indexedDB\.open/);
   assert.match(app, /MAX_FILE_SIZE/);
   assert.match(app, /function handleAttachmentDragEnter/);
@@ -81,8 +81,12 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /onDrop=\{handleAttachmentDrop\}/);
   assert.match(app, /ドラッグ＆ドロップまたはクリックして選択/);
   assert.match(app, /function handleCardPaste/);
+  assert.match(app, /function addFilesToSavedTask/);
+  assert.match(app, /function removeAttachmentFromTask/);
+  assert.match(app, /function AttachmentThumbnail/);
   assert.match(app, /event\.clipboardData\.items/);
-  assert.match(app, /filesToAttachments\(imageFiles, true\)/);
+  assert.match(app, /filesToAttachments\(files, pasted\)/);
+  assert.match(app, /aria-label="現在の添付ファイル"/);
   assert.match(app, /貼り付け先：/);
   assert.match(app, /function restoreBackup/);
   assert.match(app, /blobToDataUrl/);
@@ -118,8 +122,11 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /subTasks: SubTask\[\]/);
   assert.match(app, /function subTaskProgress/);
   assert.match(app, /function addSubTask/);
+  assert.match(app, /function renameSubTask/);
   assert.match(app, /function toggleSubTask/);
   assert.match(app, /function deleteSubTask/);
+  assert.match(app, /className="subtask-title-input"/);
+  assert.match(app, /子ToDo名はこのパネル上で直接変更できます/);
   assert.match(app, /function addFormSubTask/);
   assert.match(app, /function updateFormSubTask/);
   assert.match(app, /function toggleFormSubTask/);
@@ -190,6 +197,9 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.drag-status/);
   assert.match(css, /\.subtask-progress-badge/);
   assert.match(css, /\.detail-subtask-progress/);
+  assert.match(css, /\.subtask-title-input/);
+  assert.match(css, /\.detail-attachment-row/);
+  assert.match(css, /\.selected-file-thumbnail/);
   assert.match(css, /\.subtask-item/);
   assert.match(css, /\.subtask-drag-handle/);
   assert.match(css, /\.form-subtask-drag-handle/);

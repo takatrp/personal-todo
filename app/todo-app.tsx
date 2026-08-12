@@ -87,6 +87,22 @@ type Attachment = {
   storagePath?: string;
 };
 
+function AttachmentThumbnail({ attachment }: { attachment: Attachment }) {
+  const thumbnailUrl = useMemo(
+    () => attachment.type.startsWith("image/") ? URL.createObjectURL(attachment.data) : "",
+    [attachment.data, attachment.type],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (thumbnailUrl) URL.revokeObjectURL(thumbnailUrl);
+    };
+  }, [thumbnailUrl]);
+
+  if (!thumbnailUrl) return <Paperclip size={18} aria-hidden="true" />;
+  return <img src={thumbnailUrl} alt="" />;
+}
+
 type SubTask = {
   id: string;
   title: string;
@@ -2703,6 +2719,23 @@ export function TodoApp() {
     if (!saved) setSubTaskDraft(title);
   }
 
+  async function renameSubTask(task: Task, subTask: SubTask, nextTitle: string) {
+    const title = nextTitle.trim();
+    if (!title) {
+      setNotice("子ToDoの名前を入力してください");
+      return false;
+    }
+    if (title === subTask.title) return true;
+    const now = new Date().toISOString();
+    return saveSubTasks(
+      task,
+      task.subTasks.map((item) => item.id === subTask.id
+        ? { ...item, title, updatedAt: now }
+        : item),
+      "子ToDoの内容を変更しました",
+    );
+  }
+
   async function toggleSubTask(task: Task, subTask: SubTask) {
     const now = new Date().toISOString();
     const nextCompletedAt = subTask.completedAt ? "" : now;
@@ -3104,6 +3137,55 @@ export function TodoApp() {
     handleFiles(event.dataTransfer.files);
   }
 
+  async function addFilesToSavedTask(task: Task, files: File[], pasted = false) {
+    if (pastingTaskId) return;
+    if (files.length === 0) return;
+    const limitMessage = attachmentLimitMessage(task.attachments, files);
+    if (limitMessage) {
+      setNotice(limitMessage);
+      return;
+    }
+
+    const attachments = filesToAttachments(files, pasted);
+    const nextTask: Task = {
+      ...task,
+      attachments: [...task.attachments, ...attachments],
+      updatedAt: new Date().toISOString(),
+    };
+    setPastingTaskId(task.id);
+    try {
+      await writeTask(nextTask);
+      setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? nextTask : item)));
+      setNotice(pasted
+        ? `${attachments.length}枚の画像を「${task.title}」に添付しました`
+        : `${attachments.length}件のファイルを「${task.title}」に添付しました`);
+    } catch {
+      setStorageError(true);
+      setNotice("ファイルを添付できませんでした。もう一度お試しください");
+    } finally {
+      setPastingTaskId(null);
+    }
+  }
+
+  async function removeAttachmentFromTask(task: Task, attachment: Attachment) {
+    if (!window.confirm(`添付ファイル「${attachment.name}」を外しますか？`)) return;
+    const previousTask = tasks.find((item) => item.id === task.id) ?? task;
+    const nextTask: Task = {
+      ...previousTask,
+      attachments: previousTask.attachments.filter((item) => item.id !== attachment.id),
+      updatedAt: new Date().toISOString(),
+    };
+    setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? nextTask : item)));
+    try {
+      await writeTask(nextTask);
+      setNotice("添付ファイルを外しました");
+    } catch {
+      setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? previousTask : item)));
+      setStorageError(true);
+      setNotice("添付ファイルを外せませんでした");
+    }
+  }
+
   async function handleCardPaste(event: ClipboardEvent<HTMLElement>, task: Task) {
     if (pastingTaskId) return;
     const itemFiles = Array.from(event.clipboardData.items)
@@ -3117,29 +3199,7 @@ export function TodoApp() {
 
     event.preventDefault();
     event.stopPropagation();
-    const limitMessage = attachmentLimitMessage(task.attachments, imageFiles);
-    if (limitMessage) {
-      setNotice(limitMessage);
-      return;
-    }
-
-    const pastedAttachments = filesToAttachments(imageFiles, true);
-    const nextTask: Task = {
-      ...task,
-      attachments: [...task.attachments, ...pastedAttachments],
-      updatedAt: new Date().toISOString(),
-    };
-    setPastingTaskId(task.id);
-    try {
-      await writeTask(nextTask);
-      setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? nextTask : item)));
-      setNotice(`${pastedAttachments.length}枚の画像を「${task.title}」に添付しました`);
-    } catch {
-      setStorageError(true);
-      setNotice("画像を添付できませんでした。もう一度お試しください");
-    } finally {
-      setPastingTaskId(null);
-    }
+    await addFilesToSavedTask(task, imageFiles, true);
   }
 
   function openImagePreview(attachment: Attachment, taskTitle: string, trigger?: HTMLElement) {
@@ -4307,6 +4367,7 @@ export function TodoApp() {
                 >
                   <span style={{ width: `${selectedSubTaskProgress?.percent ?? 0}%` }} />
                 </div>
+                <small className="subtask-edit-hint">子ToDo名はこのパネル上で直接変更できます。</small>
                 <form
                   className="subtask-add-form"
                   onSubmit={(event) => {
@@ -4376,7 +4437,30 @@ export function TodoApp() {
                         >
                           <DotsSixVertical size={17} weight="bold" />
                         </button>
-                        <span>{subTask.title}</span>
+                        <input
+                          className="subtask-title-input"
+                          type="text"
+                          defaultValue={subTask.title}
+                          key={`${subTask.id}:${subTask.updatedAt}`}
+                          maxLength={160}
+                          aria-label={`${subTask.title}の名前を編集`}
+                          title="直接入力し、Enterまたは枠外クリックで保存"
+                          onBlur={(event) => {
+                            const input = event.currentTarget;
+                            void renameSubTask(selectedTask, subTask, input.value).then((saved) => {
+                              if (!saved && input.isConnected) input.value = subTask.title;
+                            });
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                              event.preventDefault();
+                              event.currentTarget.blur();
+                            } else if (event.key === "Escape") {
+                              event.currentTarget.value = subTask.title;
+                              event.currentTarget.blur();
+                            }
+                          }}
+                        />
                         <button
                           type="button"
                           className="subtask-delete"
@@ -4437,18 +4521,43 @@ export function TodoApp() {
               )}
 
               <section className="detail-section detail-attachments">
-                <div className="detail-section-label"><Paperclip size={18} /><span>添付ファイル</span><small>{selectedTask.attachments.length}</small></div>
+                <div className="detail-section-label">
+                  <Paperclip size={18} /><span>添付ファイル</span><small>{selectedTask.attachments.length}</small>
+                  <label className="detail-attachment-add">
+                    <Plus size={14} /> 追加
+                    <input
+                      type="file"
+                      multiple
+                      onChange={(event) => {
+                        const files = Array.from(event.target.files ?? []);
+                        event.target.value = "";
+                        void addFilesToSavedTask(selectedTask, files);
+                      }}
+                      disabled={pastingTaskId === selectedTask.id}
+                    />
+                  </label>
+                </div>
                 {selectedTask.attachments.length > 0 ? selectedTask.attachments.map((attachment) => (
-                  <button
-                    type="button"
-                    key={attachment.id}
-                    onClick={(event) => openImagePreview(attachment, selectedTask.title, event.currentTarget)}
-                  >
-                    <Paperclip size={15} />
-                    <span>{attachment.name}</span>
-                    <small>{formatBytes(attachment.size)}</small>
-                  </button>
-                )) : <p className="detail-empty">スクリーンショットは、このパネル上で貼り付けできます。</p>}
+                  <div className="detail-attachment-row" key={attachment.id}>
+                    <button
+                      type="button"
+                      className="detail-attachment-open"
+                      onClick={(event) => openImagePreview(attachment, selectedTask.title, event.currentTarget)}
+                    >
+                      <span className="attachment-thumbnail"><AttachmentThumbnail attachment={attachment} /></span>
+                      <span><b>{attachment.name}</b><small>{formatBytes(attachment.size)}・{attachment.type.startsWith("image/") ? "画像を表示" : "ファイルを保存"}</small></span>
+                    </button>
+                    <button
+                      type="button"
+                      className="detail-attachment-remove"
+                      onClick={() => void removeAttachmentFromTask(selectedTask, attachment)}
+                      aria-label={`${attachment.name}を外す`}
+                      title="添付ファイルを外す"
+                    >
+                      <Trash size={15} />
+                    </button>
+                  </div>
+                )) : <p className="detail-empty">ここでファイルを追加できます。スクリーンショットの貼り付けにも対応しています。</p>}
               </section>
             </div>
 
@@ -4799,7 +4908,44 @@ export function TodoApp() {
                   onDragLeave={handleAttachmentDragLeave}
                   onDrop={handleAttachmentDrop}
                 >
-                  <span>ファイル添付</span>
+                  <span className="attachment-field-heading">
+                    <span>添付ファイル</span>
+                    <small>{form.attachments.length}件</small>
+                  </span>
+                  {form.attachments.length > 0 && (
+                    <div className="selected-files" aria-label="現在の添付ファイル">
+                      {form.attachments.map((attachment) => (
+                        <div key={attachment.id}>
+                          <button
+                            type="button"
+                            className="selected-file-thumbnail"
+                            onClick={(event) => openImagePreview(attachment, form.title || "編集中のToDo", event.currentTarget)}
+                            aria-label={`${attachment.name}を${attachment.type.startsWith("image/") ? "表示" : "保存"}`}
+                          >
+                            <AttachmentThumbnail attachment={attachment} />
+                          </button>
+                          <span><b>{attachment.name}</b><small>{formatBytes(attachment.size)}</small></span>
+                          <button
+                            type="button"
+                            className="preview-file-button"
+                            onClick={(event) => openImagePreview(attachment, form.title || "編集中のToDo", event.currentTarget)}
+                          >
+                            {attachment.type.startsWith("image/") ? "表示" : "保存"}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`${attachment.name}を外す`}
+                            onClick={() => setForm((current) => ({
+                              ...current,
+                              attachments: current.attachments.filter((item) => item.id !== attachment.id),
+                            }))}
+                          >
+                            外す
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <label
                     className={`file-drop${isFileDragActive ? " drag-active" : ""}`}
                     aria-label="ファイルをドラッグ＆ドロップまたは選択して添付"
@@ -4822,34 +4968,6 @@ export function TodoApp() {
                         : "1ファイル8MB・合計20MB・最大10件まで"}
                     </small>
                   </label>
-                  {form.attachments.length > 0 && (
-                    <div className="selected-files">
-                      {form.attachments.map((attachment) => (
-                        <div key={attachment.id}>
-                          <span><b>{attachment.name}</b><small>{formatBytes(attachment.size)}</small></span>
-                          {attachment.type.startsWith("image/") && (
-                            <button
-                              type="button"
-                              className="preview-file-button"
-                              onClick={(event) => openImagePreview(attachment, form.title || "編集中のToDo", event.currentTarget)}
-                            >
-                              表示
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            aria-label={`${attachment.name}を外す`}
-                            onClick={() => setForm((current) => ({
-                              ...current,
-                              attachments: current.attachments.filter((item) => item.id !== attachment.id),
-                            }))}
-                          >
-                            外す
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
 
                 {editingId && (
