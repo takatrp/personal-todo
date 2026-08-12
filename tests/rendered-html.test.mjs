@@ -46,7 +46,7 @@ test("個人向けToDo画面をサーバーレンダリングする", async () =
 });
 
 test("必須機能とレスポンシブ設計をソースに備える", async () => {
-  const [app, css, layout, packageJson, supabaseClient, schema, pagesConfig, pagesHtml, manifest] = await Promise.all([
+  const [app, css, layout, packageJson, supabaseClient, schema, pagesConfig, pagesHtml, manifest, appIcon] = await Promise.all([
     readFile(new URL("../app/todo-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -56,6 +56,7 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
     readFile(new URL("../vite.pages.config.ts", import.meta.url), "utf8"),
     readFile(new URL("../index.html", import.meta.url), "utf8"),
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
+    readFile(new URL("../public/totonou-todo-icon.png", import.meta.url)),
   ]);
 
   assert.match(app, /createdAt: previousTask\?\.createdAt \?\? now/);
@@ -228,10 +229,17 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /\.cloud-sync-button/);
   assert.match(css, /\.auth-method-tabs/);
   assert.match(css, /\.password-modal/);
+  assert.match(css, /--primary: #578899/);
+  assert.match(app, /totonou-todo-icon\.png/);
   assert.match(pagesHtml, /rel="manifest" href="\.\/manifest\.webmanifest"/);
   assert.match(pagesHtml, /apple-mobile-web-app-capable/);
+  assert.match(pagesHtml, /theme-color" content="#578899"/);
+  assert.match(pagesHtml, /totonou-todo-icon\.png/);
   assert.match(manifest, /"display": "standalone"/);
   assert.match(manifest, /"start_url": "\.\/"/);
+  assert.match(manifest, /"theme_color": "#578899"/);
+  assert.match(manifest, /"purpose": "maskable"/);
+  assert.ok(appIcon.length > 100_000);
   assert.match(css, /\.safari-login-guide/);
   assert.match(supabaseClient, /persistSession: true/);
   assert.match(supabaseClient, /detectSessionInUrl: false/);

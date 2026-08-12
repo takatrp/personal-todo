@@ -3474,7 +3474,7 @@ export function TodoApp() {
       {showCloudGate && (
         <div className="cloud-auth-backdrop">
           <section className="cloud-auth-card" role="dialog" aria-modal="true" aria-labelledby="cloud-auth-title">
-            <span className="cloud-auth-mark" aria-hidden="true">と</span>
+            <span className="cloud-auth-mark" aria-hidden="true"><img src="./totonou-todo-icon.png" alt="" /></span>
             {!isAuthReady ? (
               <>
                 <p className="eyebrow">CLOUD SYNC</p>
@@ -3599,7 +3599,7 @@ export function TodoApp() {
       )}
       <aside className="sidebar" aria-label="ToDoの表示切替">
         <div className="brand">
-          <span className="brand-mark" aria-hidden="true">と</span>
+          <span className="brand-mark" aria-hidden="true"><img src="./totonou-todo-icon.png" alt="" /></span>
         </div>
 
         <nav className="side-nav">

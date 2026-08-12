@@ -1,18 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --ink: #1f2430;
-  --muted: #697080;
-  --faint: #969baa;
-  --line: #e8e6e1;
+  --ink: #23343b;
+  --muted: #64757c;
+  --faint: #89999f;
+  --line: #e1e8e8;
   --paper: #ffffff;
-  --canvas: #f7f6f2;
-  --sidebar: #202638;
-  --primary: #5b5bd6;
-  --primary-dark: #4949bb;
-  --primary-soft: #eeeefd;
-  --sage: #5b8c74;
-  --sage-soft: #e7f2eb;
+  --canvas: #f7f8f6;
+  --sidebar: #22363d;
+  --primary: #578899;
+  --primary-dark: #3f6977;
+  --primary-soft: #e8f0f2;
+  --sage: #648b7e;
+  --sage-soft: #e9f2ee;
   --amber: #b87520;
   --amber-soft: #fff2dd;
   --red: #c84f57;
@@ -33,7 +33,7 @@ html {
 body {
   margin: 0;
   background:
-    radial-gradient(circle at 82% -10%, rgba(91, 91, 214, 0.08), transparent 30rem),
+    radial-gradient(circle at 82% -10%, rgba(87, 136, 153, 0.12), transparent 30rem),
     var(--canvas);
   color: var(--ink);
   font-family: "Yu Gothic UI", "Hiragino Sans", "Noto Sans JP", system-ui, -apple-system, sans-serif;
@@ -56,7 +56,7 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 3px solid rgba(91, 91, 214, 0.25);
+  outline: 3px solid rgba(87, 136, 153, 0.3);
   outline-offset: 2px;
 }
 
@@ -105,12 +105,18 @@ select:focus-visible {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 14px;
-  background: #7676e9;
+  overflow: hidden;
+  background: #578899;
   box-shadow: 0 8px 22px rgba(12, 15, 30, 0.25);
   color: #fff;
-  font-family: "Yu Mincho", serif;
-  font-size: 22px;
-  font-weight: 800;
+}
+
+.brand-mark img,
+.cloud-auth-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .brand strong,
@@ -159,8 +165,8 @@ select:focus-visible {
 
 .nav-item.active {
   color: #fff;
-  background: rgba(118, 118, 233, 0.2);
-  box-shadow: inset 3px 0 #8989f2;
+  background: rgba(87, 136, 153, 0.28);
+  box-shadow: inset 3px 0 #80aab6;
 }
 
 .nav-dot {
@@ -173,7 +179,7 @@ select:focus-visible {
 .nav-dot.today { background: #e4aa5f; }
 .nav-dot.overdue { background: #e57880; }
 .nav-dot.upcoming { background: #72a68c; }
-.nav-dot.done { background: #8989f2; }
+.nav-dot.done { background: #80aab6; }
 .nav-dot.trash { background: #9b7277; }
 
 .nav-count {
@@ -205,7 +211,7 @@ select:focus-visible {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 8px;
-  color: #c9c9ff;
+  color: #b8d0d6;
   background: rgba(118, 118, 233, 0.18);
 }
 
@@ -277,7 +283,7 @@ select:focus-visible {
   border: 1px solid var(--primary);
   color: #fff;
   background: var(--primary);
-  box-shadow: 0 8px 20px rgba(91, 91, 214, 0.2);
+  box-shadow: 0 8px 20px rgba(87, 136, 153, 0.22);
 }
 
 .primary-button:hover:not(:disabled) {
@@ -432,7 +438,7 @@ select:focus-visible {
 .tab-drag-handle:hover,
 .task-drag-handle:hover {
   color: var(--primary);
-  border-color: #c8c8f5;
+  border-color: #b8d0d6;
   background: var(--primary-soft);
 }
 
@@ -469,8 +475,8 @@ select:focus-visible {
 }
 
 .custom-tab.active {
-  border-color: #c8c8f5;
-  color: #4748b3;
+  border-color: #b8d0d6;
+  color: var(--primary-dark);
   background: var(--primary-soft);
 }
 
@@ -495,7 +501,7 @@ select:focus-visible {
   min-height: 44px;
   padding: 0 13px;
   border-radius: 12px;
-  color: #5051b6;
+  color: var(--primary-dark);
   font-size: 10.5px;
 }
 
@@ -726,13 +732,13 @@ select:focus-visible {
 }
 
 .task-card:hover {
-  border-color: #d6d3e4;
+  border-color: #cbdadd;
   box-shadow: 0 9px 24px rgba(31, 36, 48, 0.06);
 }
 
 .task-card.dragging {
   opacity: 0.42;
-  border-color: #c8c8f5;
+  border-color: #b8d0d6;
   transform: scale(0.99);
 }
 
@@ -750,7 +756,7 @@ select:focus-visible {
 .task-card:focus-within,
 .kanban-card:focus-within {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.16), var(--shadow-soft);
+  box-shadow: 0 0 0 3px rgba(87, 136, 153, 0.18), var(--shadow-soft);
 }
 
 .task-card.pasting,
@@ -863,7 +869,7 @@ select:focus-visible {
   border-radius: 8px;
   color: var(--ink);
   background: #fff;
-  box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.12);
+  box-shadow: 0 0 0 3px rgba(87, 136, 153, 0.14);
   font-size: 13px;
   font-weight: 800;
 }
@@ -903,7 +909,7 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.status-doing { color: #4445a6; background: var(--primary-soft); }
+.status-doing { color: var(--primary-dark); background: var(--primary-soft); }
 .status-waiting { color: #98621c; background: var(--amber-soft); }
 .status-done { color: #3f765d; background: var(--sage-soft); }
 
@@ -928,7 +934,7 @@ select:focus-visible {
 .tag {
   padding: 3px 7px;
   border-radius: 6px;
-  color: #5556b8;
+  color: var(--primary-dark);
   background: var(--primary-soft);
   font-size: 9.5px;
   font-weight: 700;
@@ -983,7 +989,7 @@ select:focus-visible {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border: 1px solid #dfdde8;
+  border: 1px solid #d6e1e3;
   border-radius: 8px;
   color: #55566b;
   background: #f8f7fc;
@@ -992,14 +998,14 @@ select:focus-visible {
 }
 
 .attachment-row button:hover {
-  border-color: #c7c4dc;
+  border-color: #bcd1d6;
   color: var(--primary);
 }
 
 .attachment-row button.image-attachment {
-  border-color: #d1d5ef;
-  color: #4f50ad;
-  background: #f5f5ff;
+  border-color: #c8dade;
+  color: var(--primary-dark);
+  background: #f1f6f7;
 }
 
 .attachment-row button > span:nth-child(2) {
@@ -1042,7 +1048,7 @@ select:focus-visible {
 }
 
 .recurrence-label {
-  color: #5152b5;
+  color: var(--primary-dark);
 }
 
 .deleted-label {
@@ -1056,7 +1062,7 @@ select:focus-visible {
 
 .task-card:focus-within .paste-hint,
 .kanban-card:focus-within .paste-hint {
-  color: #4b4cb0;
+  color: var(--primary-dark);
   background: var(--primary-soft);
 }
 
@@ -1106,7 +1112,7 @@ select:focus-visible {
   padding: 2px 2px 12px;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
-  scrollbar-color: #c9c6d6 transparent;
+  scrollbar-color: #c4d4d8 transparent;
 }
 
 .kanban-board.incomplete-only {
@@ -1180,7 +1186,7 @@ select:focus-visible {
 }
 
 .kanban-card:hover {
-  border-color: #cbc8da;
+  border-color: #c2d4d8;
   box-shadow: 0 7px 18px rgba(31, 36, 48, 0.09);
   transform: translateY(-1px);
 }
@@ -1258,9 +1264,9 @@ select:focus-visible {
   margin-top: 8px;
   padding: 6px 8px;
   overflow: hidden;
-  border: 1px solid #d9daf0;
+  border: 1px solid #d0dfe2;
   border-radius: 8px;
-  color: #5051aa;
+  color: #3f6977;
   background: #f7f7ff;
   font-size: 9px;
   font-weight: 800;
@@ -1322,7 +1328,7 @@ select:focus-visible {
 
 .kanban-add:hover {
   color: var(--primary);
-  background: rgba(91, 91, 214, 0.08);
+  background: rgba(87, 136, 153, 0.1);
 }
 
 .gantt-toolbar {
@@ -1366,7 +1372,7 @@ select:focus-visible {
 }
 
 .gantt-nav button:hover {
-  border-color: #cac7dc;
+  border-color: #c1d3d7;
   color: var(--primary);
 }
 
@@ -1374,7 +1380,7 @@ select:focus-visible {
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 14px;
-  scrollbar-color: #c9c6d6 transparent;
+  scrollbar-color: #c4d4d8 transparent;
 }
 
 .gantt-chart {
@@ -1470,7 +1476,7 @@ select:focus-visible {
 }
 
 .gantt-task-cell:hover {
-  background: #faf9ff;
+  background: #f3f7f8;
 }
 
 .gantt-task-cell > span {
@@ -1581,7 +1587,7 @@ select:focus-visible {
 
 .undated-tasks button:hover {
   color: var(--primary);
-  border-color: #cac7dc;
+  border-color: #c1d3d7;
 }
 
 .empty-state {
@@ -1765,7 +1771,7 @@ select:focus-visible {
 .form-field textarea:focus,
 .form-field select:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.1);
+  box-shadow: 0 0 0 3px rgba(87, 136, 153, 0.1);
 }
 
 .form-field input::placeholder,
@@ -1782,7 +1788,7 @@ select:focus-visible {
 .tag-preview i {
   padding: 4px 7px;
   border-radius: 6px;
-  color: #5556b8;
+  color: #3f6977;
   background: var(--primary-soft);
   font-size: 9.5px;
   font-style: normal;
@@ -1817,13 +1823,13 @@ select:focus-visible {
   align-items: center;
   gap: 7px 12px;
   padding: 13px 14px;
-  border: 1px solid #d9d9ef;
+  border: 1px solid #d0dfe2;
   border-radius: 13px;
-  background: #f8f8ff;
+  background: #f3f7f8;
 }
 
 .template-picker > span {
-  color: #4d4eaa;
+  color: #3f6977;
   font-size: 11px;
   font-weight: 900;
 }
@@ -1831,7 +1837,7 @@ select:focus-visible {
 .template-picker select {
   min-height: 42px;
   padding: 0 11px;
-  border: 1px solid #cecee8;
+  border: 1px solid #c8dade;
   border-radius: 10px;
   background: #fff;
   font-size: 11px;
@@ -1879,17 +1885,17 @@ select:focus-visible {
 }
 
 .form-field .time-toggle input:focus {
-  box-shadow: 0 0 0 3px rgba(91, 91, 214, 0.1);
+  box-shadow: 0 0 0 3px rgba(87, 136, 153, 0.1);
 }
 
 .template-save-button {
   width: fit-content;
   min-height: 40px;
   padding: 0 13px;
-  border: 1px solid #d8d8ea;
+  border: 1px solid #cfdee1;
   border-radius: 10px;
-  color: #5051aa;
-  background: #f8f8ff;
+  color: #3f6977;
+  background: #f3f7f8;
   font-size: 10px;
   font-weight: 800;
 }
@@ -2159,12 +2165,12 @@ select:focus-visible {
 }
 
 .home-app-panel {
-  border-color: #d8d7ef;
-  background: #faf9ff;
+  border-color: #c9dadd;
+  background: #f3f7f8;
 }
 
 .restore-panel {
-  border-color: #e3dfe6;
+  border-color: #dbe5e6;
   background: #fcfbfd;
 }
 
@@ -2204,9 +2210,9 @@ select:focus-visible {
   display: grid;
   gap: 10px;
   padding: 15px;
-  border: 1px solid #d9d9ec;
+  border: 1px solid #d0dfe2;
   border-radius: 14px;
-  background: #f9f9ff;
+  background: #f3f7f8;
 }
 
 .template-manager-panel > header {
@@ -2224,15 +2230,15 @@ select:focus-visible {
 .template-manager-panel > header > span {
   padding: 4px 8px;
   border-radius: 999px;
-  color: #5152ad;
-  background: #ececff;
+  color: #3f6977;
+  background: #e5eef0;
   font-size: 9px;
   font-weight: 800;
 }
 
 .template-manager-empty {
   padding: 16px;
-  border: 1px dashed #d6d6e7;
+  border: 1px dashed #cedcdf;
   border-radius: 10px;
   color: var(--faint);
   font-size: 10px;
@@ -2250,7 +2256,7 @@ select:focus-visible {
   align-items: center;
   gap: 6px;
   padding: 9px 10px;
-  border: 1px solid #e1e1ed;
+  border: 1px solid #d9e4e6;
   border-radius: 10px;
   background: #fff;
 }
@@ -2278,8 +2284,8 @@ select:focus-visible {
   padding: 0 9px;
   border: 0;
   border-radius: 8px;
-  color: #5051aa;
-  background: #efefff;
+  color: #3f6977;
+  background: #e6eff1;
   font-size: 9px;
   font-weight: 800;
 }
@@ -2358,7 +2364,7 @@ select:focus-visible {
   border: 1px dashed #c8c5d4;
   border-radius: 12px;
   color: var(--primary);
-  background: #faf9ff;
+  background: #f3f7f8;
   cursor: pointer;
   text-align: center;
   transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease, transform 150ms ease;
@@ -2367,14 +2373,14 @@ select:focus-visible {
 .file-drop:hover,
 .file-drop:focus-within {
   border-color: var(--primary);
-  background: #f6f5ff;
+  background: #eef5f6;
 }
 
 .file-drop.drag-active {
   border: 2px solid var(--primary);
-  color: #4445ba;
-  background: #efefff;
-  box-shadow: 0 0 0 5px rgba(93, 94, 228, 0.13), 0 14px 30px rgba(66, 67, 154, 0.12);
+  color: #3f6977;
+  background: #e6eff1;
+  box-shadow: 0 0 0 5px rgba(87, 136, 153, 0.13), 0 14px 30px rgba(54, 91, 103, 0.12);
   transform: translateY(-2px);
 }
 
@@ -2400,7 +2406,7 @@ select:focus-visible {
 }
 
 .file-drop.drag-active small {
-  color: #6263ae;
+  color: #4c7784;
   font-weight: 700;
 }
 
@@ -2468,12 +2474,12 @@ select:focus-visible {
 
 .selected-files button.preview-file-button {
   margin-left: auto;
-  color: #5051aa;
-  background: #ededff;
+  color: #3f6977;
+  background: #e5eef0;
 }
 
 .selected-files button.preview-file-button:hover {
-  background: #e2e2ff;
+  background: #dce9ec;
 }
 
 .created-info {
@@ -2715,7 +2721,7 @@ select:focus-visible {
     border-radius: 19px;
     color: #fff;
     background: var(--primary);
-    box-shadow: 0 12px 28px rgba(70, 70, 180, 0.34);
+    box-shadow: 0 12px 28px rgba(48, 79, 89, 0.34);
     font-size: 30px;
     cursor: pointer;
   }
@@ -3049,14 +3055,14 @@ select:focus-visible {
 
 /* 2026 usability redesign: contextual workspace */
 :root {
-  --canvas: #fbfaf7;
-  --sidebar: #1d2538;
-  --primary: #5d5ee4;
-  --primary-dark: #4b4dc9;
-  --primary-soft: #f0efff;
-  --line: #e8e6e1;
-  --ink: #202738;
-  --muted: #6e7484;
+  --canvas: #f7f8f6;
+  --sidebar: #22363d;
+  --primary: #578899;
+  --primary-dark: #3f6977;
+  --primary-soft: #e8f0f2;
+  --line: #e1e8e8;
+  --ink: #23343b;
+  --muted: #64757c;
 }
 
 body {
@@ -3081,7 +3087,7 @@ body {
   width: 48px;
   height: 48px;
   border-radius: 15px;
-  background: linear-gradient(145deg, #7778f1, #5e5fdd);
+  background: #578899;
 }
 
 .side-nav {
@@ -3178,7 +3184,7 @@ body {
   place-items: center;
   border-radius: 50%;
   color: #fff;
-  background: rgba(119, 120, 241, 0.62);
+  background: rgba(87, 136, 153, 0.78);
 }
 
 .sidebar-profile strong,
@@ -3646,21 +3652,21 @@ body {
 
 .incomplete-filter-toggle:hover,
 .incomplete-filter-toggle:focus-visible {
-  border-color: #b9b9ed;
+  border-color: #adc7ce;
   color: var(--primary);
-  background: #f8f7ff;
+  background: #f3f7f8;
 }
 
 .incomplete-filter-toggle.active {
-  border-color: #a8a8eb;
-  color: #4445ba;
-  background: #efefff;
-  box-shadow: inset 0 0 0 1px rgba(93, 94, 228, 0.08);
+  border-color: #91b3bc;
+  color: var(--primary-dark);
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px rgba(87, 136, 153, 0.12);
 }
 
 .active-filter-chip.incomplete-filter-chip {
-  color: #4d4eb4;
-  background: #ededff;
+  color: var(--primary-dark);
+  background: var(--primary-soft);
 }
 
 .search-box {
@@ -4314,7 +4320,7 @@ body {
     border-radius: 14px;
     color: #fff;
     background: var(--primary);
-    box-shadow: 0 12px 26px rgba(70, 71, 190, 0.28);
+    box-shadow: 0 12px 26px rgba(48, 79, 89, 0.28);
     font-weight: 800;
   }
 }
@@ -4559,7 +4565,7 @@ body {
 .custom-tab-shell.dragging {
   z-index: 3;
   opacity: 0.62;
-  outline: 2px dashed rgba(93, 94, 228, 0.5);
+  outline: 2px dashed rgba(87, 136, 153, 0.56);
   outline-offset: -2px;
   background: var(--primary-soft);
   transform: scale(0.97);
@@ -4569,9 +4575,9 @@ body {
 .kanban-card.dragging {
   z-index: 4;
   opacity: 0.6;
-  border-color: rgba(93, 94, 228, 0.55);
-  background: #f5f4ff;
-  box-shadow: inset 0 0 0 2px rgba(93, 94, 228, 0.28);
+  border-color: rgba(87, 136, 153, 0.58);
+  background: #f1f6f7;
+  box-shadow: inset 0 0 0 2px rgba(87, 136, 153, 0.28);
   filter: saturate(0.72);
   transform: scale(0.985) rotate(-0.5deg);
 }
@@ -4585,12 +4591,12 @@ body {
   overflow: hidden;
   pointer-events: none !important;
   opacity: 0.97 !important;
-  border: 1px solid rgba(93, 94, 228, 0.72) !important;
+  border: 1px solid rgba(87, 136, 153, 0.76) !important;
   border-radius: 15px !important;
   background: #fff !important;
   box-shadow:
     0 26px 54px rgba(25, 30, 48, 0.3),
-    0 0 0 3px rgba(93, 94, 228, 0.16) !important;
+    0 0 0 3px rgba(87, 136, 153, 0.18) !important;
   transform: scale(1.025) rotate(1.5deg) !important;
 }
 
@@ -4613,7 +4619,7 @@ body {
   border-radius: 999px;
   content: "";
   background: var(--primary);
-  box-shadow: 0 0 0 4px rgba(93, 94, 228, 0.14);
+  box-shadow: 0 0 0 4px rgba(87, 136, 153, 0.16);
 }
 
 .custom-tab-shell.drag-over-before::before {
@@ -4627,9 +4633,9 @@ body {
 .task-card.drag-over-target,
 .kanban-card.drag-over-target {
   z-index: 5;
-  border-color: rgba(93, 94, 228, 0.48);
-  background: #f8f7ff;
-  box-shadow: 0 10px 26px rgba(66, 67, 154, 0.13);
+  border-color: rgba(87, 136, 153, 0.52);
+  background: #f3f7f8;
+  box-shadow: 0 10px 26px rgba(54, 91, 103, 0.14);
 }
 
 .task-card.drag-over-target::before,
@@ -4641,7 +4647,7 @@ body {
   border-radius: 999px;
   content: "";
   background: var(--primary);
-  box-shadow: 0 0 0 4px rgba(93, 94, 228, 0.13);
+  box-shadow: 0 0 0 4px rgba(87, 136, 153, 0.15);
 }
 
 .task-card.drag-over-before::before,
@@ -4661,8 +4667,8 @@ body {
 .kanban-column.drag-over-target {
   outline: 2px dashed var(--primary);
   outline-offset: -4px;
-  background: #f4f3ff;
-  box-shadow: inset 0 0 0 4px rgba(93, 94, 228, 0.07);
+  background: #eef4f5;
+  box-shadow: inset 0 0 0 4px rgba(87, 136, 153, 0.09);
 }
 
 .custom-tab-shell.touch-drop-target,
@@ -4673,8 +4679,8 @@ body {
   outline-style: dashed;
   outline-color: var(--primary);
   outline-offset: -3px;
-  background: #f5f4ff;
-  box-shadow: 0 10px 24px rgba(66, 67, 154, 0.12);
+  background: #f1f6f7;
+  box-shadow: 0 10px 24px rgba(54, 91, 103, 0.13);
 }
 
 .drag-status {
@@ -4706,7 +4712,7 @@ body {
   border-radius: 10px;
   color: #fff;
   background: var(--primary);
-  box-shadow: 0 0 0 5px rgba(126, 127, 244, 0.15);
+  box-shadow: 0 0 0 5px rgba(87, 136, 153, 0.2);
 }
 
 .drag-status > span:last-child {
@@ -4753,10 +4759,10 @@ body {
   align-items: center;
   gap: 4px;
   padding: 0 7px;
-  border: 1px solid #dcdcf3;
+  border: 1px solid #cddde1;
   border-radius: 6px;
-  color: #5152b7;
-  background: #f5f4ff;
+  color: var(--primary-dark);
+  background: #f1f6f7;
   font-size: 9px;
   font-weight: 800;
   white-space: nowrap;
@@ -4774,7 +4780,7 @@ body {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--primary), #7a7bf0);
+  background: linear-gradient(90deg, var(--primary), #82aeb9);
   transition: width 180ms ease;
 }
 
@@ -4783,16 +4789,16 @@ body {
   gap: 6px;
   margin-top: 9px;
   padding: 8px 9px;
-  border: 1px solid #e2e1f2;
+  border: 1px solid #d7e3e6;
   border-radius: 9px;
-  background: #f8f7ff;
+  background: #f3f7f8;
 }
 
 .kanban-subtask-progress > span:first-child {
   display: flex;
   align-items: center;
   gap: 5px;
-  color: #5556b8;
+  color: var(--primary-dark);
   font-size: 9.5px;
   font-weight: 800;
 }
@@ -4805,7 +4811,7 @@ body {
 }
 
 .subtask-heading-row > strong {
-  color: #5152b7;
+  color: var(--primary-dark);
   font-size: 10px;
   white-space: nowrap;
 }
@@ -4837,7 +4843,7 @@ body {
 
 .subtask-add-form input:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(93, 94, 228, 0.1);
+  box-shadow: 0 0 0 3px rgba(87, 136, 153, 0.1);
 }
 
 .subtask-add-form button {
@@ -4957,7 +4963,7 @@ body {
 .subtask-drag-handle:hover,
 .form-subtask-drag-handle:hover {
   color: var(--primary);
-  border-color: #c9c8ee;
+  border-color: #bfd3d8;
 }
 
 .subtask-delete:hover {
@@ -4973,9 +4979,9 @@ body {
   display: grid;
   gap: 11px;
   padding: 15px;
-  border: 1px solid #deddec;
+  border: 1px solid #d7e2e4;
   border-radius: 13px;
-  background: #faf9ff;
+  background: #f3f7f8;
 }
 
 .form-subtasks-header {
@@ -5006,7 +5012,7 @@ body {
 }
 
 .form-subtasks-header strong {
-  color: #5152b7;
+  color: #3f6977;
   font-size: 10px;
   white-space: nowrap;
 }
@@ -5051,7 +5057,7 @@ body {
 .form-subtask-row input:focus,
 .form-subtask-add input:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(93, 94, 228, 0.1);
+  box-shadow: 0 0 0 3px rgba(87, 136, 153, 0.1);
 }
 
 .form-subtask-row.completed input {
@@ -5109,9 +5115,9 @@ body {
 .form-subtask-row.dragging {
   z-index: 3;
   opacity: 0.58;
-  border-color: rgba(93, 94, 228, 0.52);
-  background: #f6f5ff;
-  box-shadow: inset 0 0 0 2px rgba(93, 94, 228, 0.2);
+  border-color: rgba(87, 136, 153, 0.52);
+  background: #eef5f6;
+  box-shadow: inset 0 0 0 2px rgba(87, 136, 153, 0.2);
   transform: scale(0.985);
 }
 
@@ -5120,9 +5126,9 @@ body {
 .subtask-item.touch-drop-target,
 .form-subtask-row.touch-drop-target {
   z-index: 4;
-  border-color: rgba(93, 94, 228, 0.5);
-  background: #f8f7ff;
-  box-shadow: 0 8px 20px rgba(66, 67, 154, 0.12);
+  border-color: rgba(87, 136, 153, 0.5);
+  background: #f3f7f8;
+  box-shadow: 0 8px 20px rgba(54, 91, 103, 0.12);
 }
 
 .subtask-item.drag-over-target::before,
@@ -5134,7 +5140,7 @@ body {
   border-radius: 999px;
   content: "";
   background: var(--primary);
-  box-shadow: 0 0 0 4px rgba(93, 94, 228, 0.12);
+  box-shadow: 0 0 0 4px rgba(87, 136, 153, 0.12);
 }
 
 .subtask-item.drag-over-before::before,
@@ -5230,8 +5236,8 @@ body {
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(circle at 50% 12%, rgba(126, 127, 244, 0.22), transparent 28rem),
-    rgba(29, 37, 56, 0.84);
+    radial-gradient(circle at 50% 12%, rgba(87, 136, 153, 0.3), transparent 28rem),
+    rgba(31, 52, 59, 0.86);
   backdrop-filter: blur(10px);
 }
 
@@ -5252,13 +5258,11 @@ body {
   width: 52px;
   height: 52px;
   place-items: center;
+  overflow: hidden;
   border-radius: 16px;
   color: #fff;
-  background: linear-gradient(145deg, #7778f1, #5e5fdd);
-  box-shadow: 0 12px 28px rgba(70, 71, 190, 0.24);
-  font-family: "Yu Mincho", serif;
-  font-size: 24px;
-  font-weight: 800;
+  background: #578899;
+  box-shadow: 0 12px 28px rgba(48, 79, 89, 0.28);
 }
 
 .cloud-auth-card h2,
@@ -5344,23 +5348,23 @@ body {
   display: grid;
   gap: 5px;
   padding: 12px 14px;
-  border: 1px solid #d8d7ef;
+  border: 1px solid #c9dadd;
   border-radius: 12px;
-  color: #4d5261;
-  background: #faf9ff;
+  color: #4e6168;
+  background: #f3f7f8;
   font-size: 10px;
   line-height: 1.65;
 }
 
 .standalone-login-note strong {
-  color: #45469c;
+  color: var(--primary-dark);
   font-size: 11px;
 }
 
 .cloud-auth-message {
   padding: 11px 13px;
   border-radius: 10px;
-  color: #4b4c9f;
+  color: var(--primary-dark);
   background: var(--primary-soft);
   font-size: 11px;
   line-height: 1.7;
@@ -5376,14 +5380,14 @@ body {
   display: grid;
   gap: 8px;
   padding: 13px 14px;
-  border: 1px solid #d8d7ef;
+  border: 1px solid #c9dadd;
   border-radius: 12px;
-  color: #4d5261;
-  background: #faf9ff;
+  color: #4e6168;
+  background: #f3f7f8;
 }
 
 .safari-login-guide strong {
-  color: #45469c;
+  color: var(--primary-dark);
   font-size: 11px;
 }
 
@@ -5406,7 +5410,7 @@ body {
   width: 34px;
   height: 34px;
   margin-top: 8px;
-  border: 3px solid #e4e3fb;
+  border: 3px solid #dbe8eb;
   border-top-color: var(--primary);
   border-radius: 50%;
   animation: cloud-spin 800ms linear infinite;
@@ -5432,9 +5436,9 @@ body {
 }
 
 .cloud-sync-button:hover {
-  border-color: #c8c7ef;
+  border-color: #b9cfd5;
   color: var(--primary-dark);
-  background: #faf9ff;
+  background: #f3f7f8;
 }
 
 .cloud-sync-button.status-synced {
@@ -5456,8 +5460,8 @@ body {
 }
 
 .cloud-data-panel {
-  border-color: #d8d7ef;
-  background: #faf9ff;
+  border-color: #c9dadd;
+  background: #f3f7f8;
 }
 
 .cloud-error-banner {
