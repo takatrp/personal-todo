@@ -2034,6 +2034,57 @@ select:focus-visible {
   box-shadow: 0 28px 80px rgba(29, 33, 49, 0.26);
 }
 
+.password-modal {
+  width: min(560px, calc(100vw - 28px));
+  max-height: min(760px, 92vh);
+  overflow: hidden;
+  border: 1px solid rgba(31, 36, 48, 0.08);
+  border-radius: 22px;
+  background: var(--paper);
+  box-shadow: 0 28px 80px rgba(29, 33, 49, 0.26);
+}
+
+.password-setup-content {
+  display: grid;
+  gap: 16px;
+  padding: 22px 26px 24px;
+  overflow-y: auto;
+}
+
+.password-setup-lead,
+.password-security-note,
+.password-setup-message {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.75;
+}
+
+.password-setup-lead,
+.password-security-note {
+  color: var(--muted);
+}
+
+.password-security-note {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f5f4f1;
+}
+
+.password-setup-message {
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+
+.password-setup-message.success {
+  color: #276847;
+  background: #edf8f2;
+}
+
+.password-setup-message.error {
+  color: #9b3f46;
+  background: #fff0f1;
+}
+
 .data-manager-content {
   display: grid;
   max-height: calc(min(820px, 92vh) - 83px);
@@ -2105,6 +2156,11 @@ select:focus-visible {
 .data-panel > button {
   min-height: 42px;
   white-space: nowrap;
+}
+
+.home-app-panel {
+  border-color: #d8d7ef;
+  background: #faf9ff;
 }
 
 .restore-panel {
@@ -2806,6 +2862,7 @@ select:focus-visible {
   }
 
   .data-modal,
+  .password-modal,
   .image-preview-modal {
     width: 100%;
     max-height: calc(94vh - env(safe-area-inset-top));
@@ -2815,6 +2872,11 @@ select:focus-visible {
   .data-manager-content {
     max-height: calc(94vh - env(safe-area-inset-top) - 78px);
     padding: 17px 15px calc(22px + env(safe-area-inset-bottom));
+  }
+
+  .password-setup-content {
+    max-height: calc(94vh - env(safe-area-inset-top) - 150px);
+    padding: 18px 16px 20px;
   }
 
   .storage-summary {
@@ -5221,6 +5283,34 @@ body {
   line-height: 1.7;
 }
 
+.auth-method-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1.35fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #dfddd8;
+  border-radius: 12px;
+  background: #f3f2ef;
+}
+
+.auth-method-tabs button {
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 10.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.auth-method-tabs button.active {
+  color: var(--primary);
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(37, 40, 64, 0.1);
+}
+
 .cloud-auth-form {
   display: grid;
   gap: 9px;
@@ -5248,6 +5338,23 @@ body {
 .cloud-auth-form .primary-button {
   width: 100%;
   margin-top: 3px;
+}
+
+.standalone-login-note {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid #d8d7ef;
+  border-radius: 12px;
+  color: #4d5261;
+  background: #faf9ff;
+  font-size: 10px;
+  line-height: 1.65;
+}
+
+.standalone-login-note strong {
+  color: #45469c;
+  font-size: 11px;
 }
 
 .cloud-auth-message {
@@ -5381,6 +5488,8 @@ body {
   }
 
   .cloud-auth-card {
+    max-height: calc(100vh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow-y: auto;
     padding: 27px 22px;
     border-radius: 22px;
   }

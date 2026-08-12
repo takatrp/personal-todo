@@ -46,7 +46,7 @@ test("個人向けToDo画面をサーバーレンダリングする", async () =
 });
 
 test("必須機能とレスポンシブ設計をソースに備える", async () => {
-  const [app, css, layout, packageJson, supabaseClient, schema, pagesConfig] = await Promise.all([
+  const [app, css, layout, packageJson, supabaseClient, schema, pagesConfig, pagesHtml, manifest] = await Promise.all([
     readFile(new URL("../app/todo-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -54,6 +54,8 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
     readFile(new URL("../app/supabase-client.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8"),
     readFile(new URL("../vite.pages.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../index.html", import.meta.url), "utf8"),
+    readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
   ]);
 
   assert.match(app, /createdAt: previousTask\?\.createdAt \?\? now/);
@@ -201,6 +203,12 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(css, /@media \(max-width: 620px\)/);
   assert.match(css, /prefers-reduced-motion/);
   assert.match(app, /signInWithOtp/);
+  assert.match(app, /signInWithPassword/);
+  assert.match(app, /updateUser\(\{ password: passwordDraft \}\)/);
+  assert.match(app, /autoComplete="current-password"/);
+  assert.match(app, /autoComplete="new-password"/);
+  assert.match(app, /display-mode: standalone/);
+  assert.match(app, /ホーム画面アプリ用パスワード/);
   assert.match(app, /emailRedirectTo: getTodoAuthRedirectUrl/);
   assert.match(app, /from\("todo_sync_states"\)/);
   assert.match(app, /TODO_ATTACHMENT_BUCKET = "todo-attachments"/);
@@ -218,6 +226,12 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /長押しプレビューでもリンクが使用済み/);
   assert.match(css, /\.cloud-auth-backdrop/);
   assert.match(css, /\.cloud-sync-button/);
+  assert.match(css, /\.auth-method-tabs/);
+  assert.match(css, /\.password-modal/);
+  assert.match(pagesHtml, /rel="manifest" href="\.\/manifest\.webmanifest"/);
+  assert.match(pagesHtml, /apple-mobile-web-app-capable/);
+  assert.match(manifest, /"display": "standalone"/);
+  assert.match(manifest, /"start_url": "\.\/"/);
   assert.match(css, /\.safari-login-guide/);
   assert.match(supabaseClient, /persistSession: true/);
   assert.match(supabaseClient, /detectSessionInUrl: false/);

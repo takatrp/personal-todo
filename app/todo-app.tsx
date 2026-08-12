@@ -58,6 +58,7 @@ const DotsThree = createPhosphorIcon("dots-three");
 const Funnel = createPhosphorIcon("funnel");
 const Kanban = createPhosphorIcon("kanban");
 const ListBullets = createPhosphorIcon("list-bullets");
+const LockKey = createPhosphorIcon("lock-key");
 const MagnifyingGlass = createPhosphorIcon("magnifying-glass");
 const Paperclip = createPhosphorIcon("paperclip");
 const PencilSimple = createPhosphorIcon("pencil-simple");
@@ -218,6 +219,7 @@ type CloudPayload = {
 type CloudSnapshot = { tasks: Task[]; tabs: TodoTab[]; templates: TodoTemplate[] };
 type CloudSyncStatus = "local" | "connecting" | "syncing" | "synced" | "error";
 type AuthDeliveryState = "idle" | "sent" | "rate-limited" | "error";
+type AuthLoginMode = "password" | "magic-link";
 type CloudStateRow = {
   payload: unknown;
   revision: number;
@@ -1088,8 +1090,11 @@ export function TodoApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authDeliveryState, setAuthDeliveryState] = useState<AuthDeliveryState>("idle");
+  const [authLoginMode, setAuthLoginMode] = useState<AuthLoginMode>("magic-link");
+  const [isStandaloneApp, setIsStandaloneApp] = useState(false);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isCloudReady, setIsCloudReady] = useState(!hasTodoSupabaseConfig());
   const [cloudSyncStatus, setCloudSyncStatus] = useState<CloudSyncStatus>(
@@ -1113,6 +1118,12 @@ export function TodoApp() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isTabManagerOpen, setIsTabManagerOpen] = useState(false);
   const [isDataManagerOpen, setIsDataManagerOpen] = useState(false);
+  const [isPasswordSetupOpen, setIsPasswordSetupOpen] = useState(false);
+  const [passwordDraft, setPasswordDraft] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [passwordSetupMessage, setPasswordSetupMessage] = useState("");
+  const [passwordSetupSucceeded, setPasswordSetupSucceeded] = useState(false);
+  const [isPasswordUpdating, setIsPasswordUpdating] = useState(false);
   const [isProcessingData, setIsProcessingData] = useState(false);
   const [isSavingTab, setIsSavingTab] = useState(false);
   const [isFileDragActive, setIsFileDragActive] = useState(false);
@@ -1135,6 +1146,7 @@ export function TodoApp() {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">("unsupported");
   const [storageError, setStorageError] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
   const tabInputRef = useRef<HTMLInputElement>(null);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const previewReturnFocusRef = useRef<HTMLElement | null>(null);
@@ -1201,6 +1213,10 @@ export function TodoApp() {
   useEffect(() => {
     const isDesignPreview = new URLSearchParams(window.location.search).get("design-preview") === "1";
     const previewData = isDesignPreview ? buildDesignPreviewData() : null;
+    const standalone = window.matchMedia("(display-mode: standalone)").matches
+      || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    setIsStandaloneApp(standalone);
+    if (standalone) setAuthLoginMode("password");
     const savedDisplayMode = window.localStorage.getItem("totonou-display-mode");
     if (previewData) {
       setActiveTabId("preview-shared");
@@ -1329,6 +1345,19 @@ export function TodoApp() {
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
   }, [isDataManagerOpen, isProcessingData]);
+
+  useEffect(() => {
+    if (!isPasswordSetupOpen) return;
+    const focusTimer = window.setTimeout(() => passwordInputRef.current?.focus(), 60);
+    const handleEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !isPasswordUpdating) setIsPasswordSetupOpen(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [isPasswordSetupOpen, isPasswordUpdating]);
 
   useEffect(() => {
     if (!notice) return;
@@ -1816,6 +1845,78 @@ export function TodoApp() {
     }
   }
 
+  async function handlePasswordLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!todoSupabase || !authEmail.trim() || !authPassword || isAuthSubmitting) return;
+    setIsAuthSubmitting(true);
+    setAuthMessage("");
+    setAuthDeliveryState("idle");
+    try {
+      const { data, error } = await todoSupabase.auth.signInWithPassword({
+        email: authEmail.trim(),
+        password: authPassword,
+      });
+      if (error) throw error;
+      setAuthPassword("");
+      if (data.session) {
+        authUserIdRef.current = data.session.user.id;
+        setSession(data.session);
+      }
+    } catch (error) {
+      console.error("Password sign-in failed", error);
+      setAuthDeliveryState("error");
+      setAuthMessage("メールアドレスまたはパスワードが正しくありません。Safari版でパスワードを設定済みかご確認ください。");
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  }
+
+  function openPasswordSetup() {
+    setPasswordDraft("");
+    setPasswordConfirmation("");
+    setPasswordSetupMessage("");
+    setPasswordSetupSucceeded(false);
+    setIsDataManagerOpen(false);
+    setIsPasswordSetupOpen(true);
+  }
+
+  async function handlePasswordSetup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!todoSupabase || !session || isPasswordUpdating) return;
+    if (passwordDraft.length < 12) {
+      setPasswordSetupSucceeded(false);
+      setPasswordSetupMessage("パスワードは12文字以上で設定してください。");
+      return;
+    }
+    if (passwordDraft !== passwordConfirmation) {
+      setPasswordSetupSucceeded(false);
+      setPasswordSetupMessage("確認用パスワードが一致しません。");
+      return;
+    }
+    setIsPasswordUpdating(true);
+    setPasswordSetupMessage("");
+    try {
+      const { error } = await todoSupabase.auth.updateUser({ password: passwordDraft });
+      if (error) throw error;
+      setPasswordDraft("");
+      setPasswordConfirmation("");
+      setPasswordSetupSucceeded(true);
+      setPasswordSetupMessage("設定しました。ホーム画面版では、このメールアドレスとパスワードでログインできます。");
+      setNotice("ホーム画面アプリ用パスワードを設定しました");
+    } catch (error) {
+      console.error("Password setup failed", error);
+      setPasswordSetupSucceeded(false);
+      const authError = error as { code?: string };
+      setPasswordSetupMessage(
+        authError.code === "reauthentication_needed"
+          ? "安全確認のため再ログインが必要です。Safari版で一度ログアウトし、最新のメールリンクでログインしてから再設定してください。"
+          : "パスワードを設定できませんでした。通信環境を確認してもう一度お試しください。",
+      );
+    } finally {
+      setIsPasswordUpdating(false);
+    }
+  }
+
   async function handleCloudSignOut() {
     if (!todoSupabase || !session) return;
     pendingCloudSnapshotRef.current = latestCloudSnapshotRef.current;
@@ -1843,6 +1944,7 @@ export function TodoApp() {
     setTemplates([]);
     setLastCloudSyncAt("");
     setAuthEmail("");
+    setAuthPassword("");
     setAuthMessage("");
     setAuthDeliveryState("idle");
   }
@@ -3383,40 +3485,100 @@ export function TodoApp() {
             ) : !session ? (
               <>
                 <p className="eyebrow">PC・スマホで同期</p>
-                <h2 id="cloud-auth-title">同じToDoを、どの端末でも</h2>
+                <h2 id="cloud-auth-title">{isStandaloneApp ? "ホーム画面アプリへログイン" : "同じToDoを、どの端末でも"}</h2>
                 <p>同じメールアドレスでログインすると、ToDo・タブ・子ToDo・添付を安全に同期できます。</p>
-                <form className="cloud-auth-form" onSubmit={(event) => void handleCloudLogin(event)}>
-                  <label htmlFor="cloud-auth-email">メールアドレス</label>
-                  <input
-                    id="cloud-auth-email"
-                    type="email"
-                    inputMode="email"
-                    autoComplete="email"
-                    placeholder="name@example.com"
-                    value={authEmail}
-                    onChange={(event) => {
-                      setAuthEmail(event.target.value);
-                      if (authDeliveryState !== "idle") {
-                        setAuthDeliveryState("idle");
-                        setAuthMessage("");
-                      }
+                <div className="auth-method-tabs" role="tablist" aria-label="ログイン方法">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={authLoginMode === "password"}
+                    className={authLoginMode === "password" ? "active" : ""}
+                    onClick={() => {
+                      setAuthLoginMode("password");
+                      setAuthMessage("");
+                      setAuthDeliveryState("idle");
                     }}
-                    required
-                  />
-                  <button className="primary-button" type="submit" disabled={isAuthSubmitting || !authEmail.trim()}>
-                    {isAuthSubmitting ? "送信中…" : "ログインリンクを送る"}
-                  </button>
-                </form>
-                <small>パスワードは不要です。届いたメールのリンクを1回だけ開いてログインできます。</small>
-                {(authDeliveryState === "sent" || authDeliveryState === "rate-limited") && (
-                  <aside className="safari-login-guide" aria-label="Safariでログインする方法">
-                    <strong>iPhoneでSafariへログインする場合</strong>
-                    <ol>
-                      <li>iPhoneの「設定」→「アプリ」→「デフォルトのアプリ」→「ブラウザアプリ」でSafariを選ぶ</li>
-                      <li>Gmailへ戻り、最新メールのログインリンクを長押しせず1回だけタップする</li>
-                    </ol>
-                    <small>長押しプレビューでもリンクが使用済みになる場合があります。ログイン後はデフォルトブラウザを元に戻しても構いません。</small>
-                  </aside>
+                  >パスワード</button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={authLoginMode === "magic-link"}
+                    className={authLoginMode === "magic-link" ? "active" : ""}
+                    onClick={() => {
+                      setAuthLoginMode("magic-link");
+                      setAuthMessage("");
+                      setAuthDeliveryState("idle");
+                    }}
+                  >Safari用メールリンク</button>
+                </div>
+                {authLoginMode === "password" ? (
+                  <>
+                    <form className="cloud-auth-form" onSubmit={(event) => void handlePasswordLogin(event)}>
+                      <label htmlFor="cloud-auth-password-email">メールアドレス</label>
+                      <input
+                        id="cloud-auth-password-email"
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        placeholder="name@example.com"
+                        value={authEmail}
+                        onChange={(event) => setAuthEmail(event.target.value)}
+                        required
+                      />
+                      <label htmlFor="cloud-auth-password">パスワード</label>
+                      <input
+                        id="cloud-auth-password"
+                        type="password"
+                        autoComplete="current-password"
+                        value={authPassword}
+                        onChange={(event) => setAuthPassword(event.target.value)}
+                        required
+                      />
+                      <button className="primary-button" type="submit" disabled={isAuthSubmitting || !authEmail.trim() || !authPassword}>
+                        {isAuthSubmitting ? "ログイン中…" : "パスワードでログイン"}
+                      </button>
+                    </form>
+                    <aside className="standalone-login-note">
+                      <strong>ホーム画面版はSafariとログイン状態が別です</strong>
+                      <span>先にSafari版へログインし、「その他の操作」→「ホーム画面アプリ用パスワード」で一度だけ設定してください。</span>
+                    </aside>
+                  </>
+                ) : (
+                  <>
+                    <form className="cloud-auth-form" onSubmit={(event) => void handleCloudLogin(event)}>
+                      <label htmlFor="cloud-auth-email">メールアドレス</label>
+                      <input
+                        id="cloud-auth-email"
+                        type="email"
+                        inputMode="email"
+                        autoComplete="email"
+                        placeholder="name@example.com"
+                        value={authEmail}
+                        onChange={(event) => {
+                          setAuthEmail(event.target.value);
+                          if (authDeliveryState !== "idle") {
+                            setAuthDeliveryState("idle");
+                            setAuthMessage("");
+                          }
+                        }}
+                        required
+                      />
+                      <button className="primary-button" type="submit" disabled={isAuthSubmitting || !authEmail.trim()}>
+                        {isAuthSubmitting ? "送信中…" : "ログインリンクを送る"}
+                      </button>
+                    </form>
+                    <small>パスワード未設定の最初のログインに使います。届いた最新メールのリンクを1回だけ開いてください。</small>
+                    {(authDeliveryState === "sent" || authDeliveryState === "rate-limited") && (
+                      <aside className="safari-login-guide" aria-label="Safariでログインする方法">
+                        <strong>iPhoneでSafariへログインする場合</strong>
+                        <ol>
+                          <li>iPhoneの「設定」→「アプリ」→「デフォルトのアプリ」→「ブラウザアプリ」でSafariを選ぶ</li>
+                          <li>Gmailへ戻り、最新メールのログインリンクを長押しせず1回だけタップする</li>
+                        </ol>
+                        <small>長押しプレビューでもリンクが使用済みになる場合があります。ログイン後はデフォルトブラウザを元に戻しても構いません。</small>
+                      </aside>
+                    )}
+                  </>
                 )}
               </>
             ) : (
@@ -3509,6 +3671,7 @@ export function TodoApp() {
                 <div>
                   <button type="button" onClick={openTabManager}><Plus size={17} /> タブを管理</button>
                   <button type="button" onClick={() => setIsDataManagerOpen(true)}><Database size={17} /> データ管理</button>
+                  {session && <button type="button" onClick={openPasswordSetup}><LockKey size={17} /> ホーム画面アプリ用パスワード</button>}
                   <button type="button" onClick={() => setActiveView("trash")}><Trash size={17} /> ゴミ箱</button>
                   {session && <button type="button" onClick={() => void handleCloudSignOut()}><SignOut size={17} /> ログアウト</button>}
                 </div>
@@ -4796,6 +4959,82 @@ export function TodoApp() {
         </div>
       )}
 
+      {isPasswordSetupOpen && session && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !isPasswordUpdating) setIsPasswordSetupOpen(false);
+        }}>
+          <form className="password-modal" role="dialog" aria-modal="true" aria-labelledby="password-setup-title" onSubmit={(event) => void handlePasswordSetup(event)}>
+            <header className="modal-header">
+              <div>
+                <p>HOME SCREEN APP</p>
+                <h2 id="password-setup-title">ホーム画面アプリ用パスワード</h2>
+              </div>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setIsPasswordSetupOpen(false)}
+                aria-label="閉じる"
+                disabled={isPasswordUpdating}
+              >
+                <X size={20} />
+              </button>
+            </header>
+            <div className="password-setup-content">
+              <p className="password-setup-lead">
+                ホーム画面版はSafariと別の保存領域を使います。次回から <strong>{session.user.email}</strong> とこのパスワードで直接ログインできます。
+              </p>
+              <label className="form-field" htmlFor="home-app-password">
+                <span>新しいパスワード <em>12文字以上</em></span>
+                <input
+                  ref={passwordInputRef}
+                  id="home-app-password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  value={passwordDraft}
+                  onChange={(event) => {
+                    setPasswordDraft(event.target.value);
+                    setPasswordSetupMessage("");
+                  }}
+                  required
+                />
+              </label>
+              <label className="form-field" htmlFor="home-app-password-confirmation">
+                <span>新しいパスワード（確認）</span>
+                <input
+                  id="home-app-password-confirmation"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={12}
+                  value={passwordConfirmation}
+                  onChange={(event) => {
+                    setPasswordConfirmation(event.target.value);
+                    setPasswordSetupMessage("");
+                  }}
+                  required
+                />
+              </label>
+              <p className="password-security-note">
+                パスワードはこのToDoアプリや端末内データには保存しません。ほかのサービスと異なるものを設定してください。
+              </p>
+              {passwordSetupMessage && (
+                <p className={`password-setup-message ${passwordSetupSucceeded ? "success" : "error"}`} role={passwordSetupSucceeded ? "status" : "alert"}>
+                  {passwordSetupMessage}
+                </p>
+              )}
+            </div>
+            <footer className="modal-footer">
+              <button type="button" className="secondary-button" onClick={() => setIsPasswordSetupOpen(false)} disabled={isPasswordUpdating}>
+                閉じる
+              </button>
+              <button type="submit" className="primary-button" disabled={isPasswordUpdating || passwordDraft.length < 12 || !passwordConfirmation}>
+                {isPasswordUpdating ? "設定中…" : "パスワードを設定"}
+              </button>
+            </footer>
+          </form>
+        </div>
+      )}
+
       {isDataManagerOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
           if (event.target === event.currentTarget && !isProcessingData) setIsDataManagerOpen(false);
@@ -4831,6 +5070,18 @@ export function TodoApp() {
                   </div>
                   <button type="button" className="secondary-button" onClick={retryCloudSync}>
                     今すぐ同期
+                  </button>
+                </section>
+              )}
+
+              {session && (
+                <section className="data-panel home-app-panel">
+                  <div>
+                    <strong>ホーム画面アプリで使う</strong>
+                    <p>Safariとはログイン状態が別になるため、同じアカウントへ入る専用パスワードを設定します。</p>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={openPasswordSetup}>
+                    パスワードを設定
                   </button>
                 </section>
               )}

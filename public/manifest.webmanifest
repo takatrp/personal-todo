@@ -1,0 +1,19 @@
+{
+  "name": "ととのうToDo",
+  "short_name": "ととのうToDo",
+  "description": "PCとスマートフォンで同期できる個人向けToDo管理ツール",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f6f3",
+  "theme_color": "#f7f6f3",
+  "icons": [
+    {
+      "src": "./og.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

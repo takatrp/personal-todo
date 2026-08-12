@@ -49,6 +49,17 @@ https://takatrp.github.io/personal-todo/
 `app/supabase-client.ts` の `getMagicLinkRedirectUrl()` は、GitHub Pagesではクエリ文字列とハッシュを除き、必ず `/personal-todo/` へ戻します。
 公開先を `/junkai-junbi/` など別のパスへ変更する場合は、この関数とSupabase側のRedirect URLを同時に変更してください。
 
+### iPhoneのホーム画面版でログインする
+
+iOSでは、Safariとホーム画面へ追加したWebアプリが別々の保存領域を使うため、Safariのセッションはホーム画面版へ引き継がれません。本アプリでは次の手順で同じSupabaseユーザーへログインします。
+
+1. Safari版へメールリンクでログインする
+2. 「その他の操作」または「データ管理」から、12文字以上のホーム画面アプリ用パスワードを設定する
+3. Safariの共有メニューからホーム画面へ追加する
+4. ホーム画面版を開き、同じメールアドレスとパスワードでログインする
+
+パスワード設定には `supabase.auth.updateUser()`、ホーム画面版のログインには `supabase.auth.signInWithPassword()` を使います。パスワードはSupabase Authへ直接送信し、ToDoデータ、IndexedDB、localStorageには保存しません。`public/manifest.webmanifest` とApple向けmetaタグにより、ホーム画面版は独立したWebアプリとして起動します。
+
 ## 5. 同期時のデータ構造
 
 `todo_sync_states` はユーザーごとに1行を持ちます。
