@@ -7,6 +7,7 @@ import {
   FormEvent,
   HTMLAttributes,
   KeyboardEvent,
+  PointerEvent as ReactPointerEvent,
   TouchEvent,
   useEffect,
   useMemo,
@@ -877,6 +878,84 @@ function composeTaskDateValue(date: string, time: string, hasTime: boolean) {
   return new Date(`${date}T${time || "00:00"}`).toISOString();
 }
 
+function DetailDateEditor({
+  kind,
+  value,
+  fallbackTime,
+  summary,
+  onSave,
+}: {
+  kind: "start" | "due";
+  value: string;
+  fallbackTime: string;
+  summary?: string;
+  onSave: (value: string) => Promise<boolean>;
+}) {
+  const initial = toDateFormValue(value, fallbackTime);
+  const [date, setDate] = useState(initial.date);
+  const [time, setTime] = useState(initial.time);
+  const [hasTime, setHasTime] = useState(initial.hasTime);
+  const label = kind === "due" ? "期限" : "開始日";
+  const Icon = kind === "due" ? CalendarBlank : Clock;
+
+  async function commit(next = { date, time, hasTime }) {
+    const nextValue = composeTaskDateValue(next.date, next.time, next.hasTime);
+    if (nextValue === value) return;
+    const saved = await onSave(nextValue);
+    if (!saved) {
+      const original = toDateFormValue(value, fallbackTime);
+      setDate(original.date);
+      setTime(original.time);
+      setHasTime(original.hasTime);
+    }
+  }
+
+  return (
+    <section className="detail-section detail-date-editor">
+      <div className="detail-section-label"><Icon size={18} /><span>{label}</span></div>
+      <div className="detail-date-controls">
+        <input
+          type="date"
+          value={date}
+          aria-label={`${label}の日付`}
+          onChange={(event) => setDate(event.target.value)}
+          onBlur={() => void commit()}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+        />
+        <label className="detail-time-toggle">
+          <input
+            type="checkbox"
+            checked={hasTime}
+            onChange={(event) => {
+              const next = { date, time, hasTime: event.target.checked };
+              setHasTime(next.hasTime);
+              void commit(next);
+            }}
+          />
+          時刻
+        </label>
+        {hasTime && (
+          <input
+            type="time"
+            value={time}
+            aria-label={`${label}の時刻`}
+            onChange={(event) => setTime(event.target.value)}
+            onBlur={() => void commit()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />
+        )}
+      </div>
+      <small className="detail-field-help">
+        {summary || (date ? hasTime ? "日付と時刻を指定しています" : "日付のみで保存されています" : "未設定")}
+      </small>
+    </section>
+  );
+}
+
 function advanceRecurringValue(value: string, recurrence: Recurrence) {
   if (!value || recurrence === "none") return value;
   const dateOnly = isDateOnly(value);
@@ -1150,6 +1229,9 @@ export function TodoApp() {
   const [titleDraft, setTitleDraft] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(true);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(360);
+  const [detailPanelMaximum, setDetailPanelMaximum] = useState(560);
+  const [isDetailPanelResizing, setIsDetailPanelResizing] = useState(false);
   const [subTaskDraft, setSubTaskDraft] = useState("");
   const [formSubTaskDraft, setFormSubTaskDraft] = useState("");
   const [form, setForm] = useState<TaskForm>(initialForm);
@@ -1185,6 +1267,13 @@ export function TodoApp() {
   const lastCloudPathsRef = useRef<Set<string>>(new Set());
   const cloudDirtyRef = useRef(false);
   const cloudSyncTimerRef = useRef<number | null>(null);
+  const tasksRef = useRef<Task[]>([]);
+  const taskSaveQueuesRef = useRef(new Map<string, Promise<void>>());
+  const taskPatchStatesRef = useRef(new Map<string, {
+    committed: Task;
+    latestToken: symbol;
+  }>());
+  const workspaceGridRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const isDesignPreview = new URLSearchParams(window.location.search).get("design-preview") === "1";
@@ -1224,6 +1313,32 @@ export function TodoApp() {
       active = false;
       listener.subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
+  useEffect(() => {
+    const savedWidth = Number(window.localStorage.getItem("totonou-detail-panel-width"));
+    if (Number.isFinite(savedWidth) && savedWidth >= 300 && savedWidth <= 560) {
+      setDetailPanelWidth(savedWidth);
+    }
+  }, []);
+
+  useEffect(() => {
+    const workspace = workspaceGridRef.current;
+    if (!workspace || typeof ResizeObserver === "undefined") return;
+    const updateMaximum = () => {
+      if (window.innerWidth <= 960) return;
+      const maximum = Math.max(300, Math.min(560, workspace.getBoundingClientRect().width - 520));
+      setDetailPanelMaximum(Math.round(maximum));
+      setDetailPanelWidth((current) => Math.min(current, Math.round(maximum)));
+    };
+    const observer = new ResizeObserver(updateMaximum);
+    observer.observe(workspace);
+    updateMaximum();
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -1991,6 +2106,143 @@ export function TodoApp() {
     setActiveView("all");
     setSearch("");
     setShowIncompleteOnly(false);
+  }
+
+  function enqueueTaskWrite(task: Task) {
+    const previous = taskSaveQueuesRef.current.get(task.id) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => writeTask(task));
+    taskSaveQueuesRef.current.set(task.id, next);
+    void next.finally(() => {
+      if (taskSaveQueuesRef.current.get(task.id) === next) {
+        taskSaveQueuesRef.current.delete(task.id);
+      }
+    }).catch(() => undefined);
+    return next;
+  }
+
+  async function saveTaskPatch(
+    task: Task,
+    patch: Partial<Task>,
+    successMessage: string,
+  ) {
+    const previousTask = tasksRef.current.find((item) => item.id === task.id) ?? task;
+    const hasChange = Object.entries(patch).some(([key, value]) => {
+      const previousValue = previousTask[key as keyof Task];
+      return Array.isArray(value) || Array.isArray(previousValue)
+        ? JSON.stringify(value) !== JSON.stringify(previousValue)
+        : value !== previousValue;
+    });
+    if (!hasChange) return true;
+
+    const updatedTask: Task = {
+      ...previousTask,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    const optimisticTasks = sortTasks(tasksRef.current.map((item) =>
+      item.id === task.id ? updatedTask : item,
+    ));
+    tasksRef.current = optimisticTasks;
+    setTasks(optimisticTasks);
+    const token = Symbol(task.id);
+    const patchState = taskPatchStatesRef.current.get(task.id);
+    taskPatchStatesRef.current.set(task.id, {
+      committed: patchState?.committed ?? previousTask,
+      latestToken: token,
+    });
+    try {
+      await enqueueTaskWrite(updatedTask);
+      const currentPatchState = taskPatchStatesRef.current.get(task.id);
+      if (currentPatchState) currentPatchState.committed = updatedTask;
+      setNotice(successMessage);
+      return true;
+    } catch {
+      const currentPatchState = taskPatchStatesRef.current.get(task.id);
+      if (currentPatchState?.latestToken === token) {
+        const rolledBackTasks = sortTasks(tasksRef.current.map((item) =>
+          item.id === task.id ? currentPatchState.committed : item,
+        ));
+        tasksRef.current = rolledBackTasks;
+        setTasks(rolledBackTasks);
+      }
+      setStorageError(true);
+      setNotice("変更を保存できませんでした。もう一度お試しください");
+      return false;
+    } finally {
+      const currentPatchState = taskPatchStatesRef.current.get(task.id);
+      if (currentPatchState?.latestToken === token) {
+        taskPatchStatesRef.current.delete(task.id);
+      }
+    }
+  }
+
+  async function saveTaskDate(
+    task: Task,
+    field: "startAt" | "dueAt",
+    value: string,
+  ) {
+    const latestTask = tasksRef.current.find((item) => item.id === task.id) ?? task;
+    const startAt = field === "startAt" ? value : latestTask.startAt;
+    const dueAt = field === "dueAt" ? value : latestTask.dueAt;
+    if (startAt && dueAt && taskDate(startAt) > taskDate(dueAt, "end")) {
+      setNotice("期限は開始日以降に設定してください");
+      return false;
+    }
+    return saveTaskPatch(
+      latestTask,
+      { [field]: value },
+      field === "dueAt" ? "期限を変更しました" : "開始日を変更しました",
+    );
+  }
+
+  function saveDetailPanelWidth(width: number, maximum = detailPanelMaximum) {
+    const nextWidth = Math.round(Math.max(300, Math.min(maximum, width)));
+    setDetailPanelWidth(nextWidth);
+    window.localStorage.setItem("totonou-detail-panel-width", String(nextWidth));
+  }
+
+  function handleDetailPanelResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || window.innerWidth <= 960) return;
+    event.preventDefault();
+    const workspace = event.currentTarget.parentElement;
+    if (!workspace) return;
+    const bounds = workspace.getBoundingClientRect();
+    const maximum = Math.max(300, Math.min(560, bounds.width - 520));
+    let lastWidth = detailPanelWidth;
+    setIsDetailPanelResizing(true);
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const width = Math.max(300, Math.min(maximum, bounds.right - moveEvent.clientX));
+      lastWidth = Math.round(width);
+      setDetailPanelWidth(lastWidth);
+    };
+    const cleanup = () => {
+      setIsDetailPanelResizing(false);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleCancel);
+      window.removeEventListener("blur", handleCancel);
+    };
+    const handleUp = () => {
+      saveDetailPanelWidth(lastWidth, maximum);
+      cleanup();
+    };
+    const handleCancel = () => {
+      setDetailPanelWidth(detailPanelWidth);
+      cleanup();
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleCancel);
+    window.addEventListener("blur", handleCancel);
+  }
+
+  function handleDetailPanelResizeKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    saveDetailPanelWidth(detailPanelWidth + (event.key === "ArrowLeft" ? 20 : -20), detailPanelMaximum);
   }
 
   function beginInlineTitleEdit(task: Task) {
@@ -3854,7 +4106,11 @@ export function TodoApp() {
           </button>
         </section>
 
-        <div className={`workspace-grid${isDetailPanelOpen && selectedTask ? " detail-open" : " detail-closed"}`}>
+        <div
+          ref={workspaceGridRef}
+          className={`workspace-grid${isDetailPanelOpen && selectedTask ? " detail-open" : " detail-closed"}${isDetailPanelResizing ? " detail-resizing" : ""}`}
+          style={{ "--detail-panel-width": `${detailPanelWidth}px` } as CSSProperties}
+        >
         <section className="task-section" aria-labelledby="task-list-heading">
           <div className="section-toolbar">
             <div className="section-summary">
@@ -4296,23 +4552,11 @@ export function TodoApp() {
                     <div className="task-status-cell">
                       <span className={`status-badge status-${task.status}`}>{statusLabels[task.status]}</span>
                     </div>
-                    {activeView === "trash" ? (
+                    {activeView === "trash" && (
                       <div className="trash-row-actions">
                         <button type="button" className="restore-action" onClick={() => void restoreTask(task)}><ArrowCounterClockwise size={16} /> 元に戻す</button>
                         <button type="button" className="delete-action" onClick={() => void permanentlyDeleteTask(task)}>完全に削除</button>
                       </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="task-row-menu"
-                        onClick={() => {
-                          setSelectedTaskId(task.id);
-                          setIsDetailPanelOpen(true);
-                        }}
-                        aria-label={`${task.title}の詳細を表示`}
-                      >
-                        <DotsThree size={20} weight="bold" />
-                      </button>
                     )}
                   </article>
                 );
@@ -4322,23 +4566,74 @@ export function TodoApp() {
           ) : null}
         </section>
         {isDetailPanelOpen && selectedTask && effectiveDisplayMode === "list" && activeView !== "trash" && (
+          <div
+            className="detail-panel-resizer"
+            role="separator"
+            aria-label="ToDo一覧と詳細パネルの幅を調整"
+            aria-orientation="vertical"
+            aria-valuemin={300}
+            aria-valuemax={detailPanelMaximum}
+            aria-valuenow={detailPanelWidth}
+            tabIndex={0}
+            title="左右にドラッグして詳細パネルの幅を調整"
+            onPointerDown={handleDetailPanelResizeStart}
+            onKeyDown={handleDetailPanelResizeKeyDown}
+          >
+            <span aria-hidden="true" />
+          </div>
+        )}
+        {isDetailPanelOpen && selectedTask && effectiveDisplayMode === "list" && activeView !== "trash" && (
           <aside className={`task-detail-panel ${selectedTaskId ? "user-selected" : "auto-selected"}`} aria-label={`${selectedTask.title}の詳細`} onPaste={(event) => void handleCardPaste(event, selectedTask)}>
             <header className="detail-panel-header">
               <div>
                 <div className="detail-title-row">
-                  {renderInlineTitle(selectedTask, "detail-title-button", false)}
+                  <input
+                    className="detail-title-input"
+                    type="text"
+                    defaultValue={selectedTask.title}
+                    key={`${selectedTask.id}:${selectedTask.title}:detail-title`}
+                    maxLength={120}
+                    aria-label="タイトル"
+                    title="Enterまたは枠外クリックで保存"
+                    onBlur={(event) => {
+                      const input = event.currentTarget;
+                      const title = input.value.trim();
+                      if (!title) {
+                        input.value = selectedTask.title;
+                        setNotice("タイトルは空欄にできません");
+                        return;
+                      }
+                      void saveTaskPatch(selectedTask, { title }, "タイトルを変更しました").then((saved) => {
+                        if (!saved && input.isConnected) input.value = selectedTask.title;
+                      });
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                        event.preventDefault();
+                        event.currentTarget.blur();
+                      } else if (event.key === "Escape") {
+                        event.currentTarget.value = selectedTask.title;
+                        event.currentTarget.blur();
+                      }
+                    }}
+                  />
                   <span className={`status-badge status-${selectedTask.status}`}>{statusLabels[selectedTask.status]}</span>
                 </div>
                 <span className="detail-updated">更新 {formatCreatedAt(selectedTask.updatedAt)}</span>
+                <span className="detail-autosave-note">入力内容は自動保存されます</span>
               </div>
               <button type="button" onClick={() => setIsDetailPanelOpen(false)} aria-label="詳細を閉じる"><X size={20} /></button>
             </header>
 
             <div className="detail-panel-body">
-              <section className="detail-section detail-deadline">
-                <div className="detail-section-label"><CalendarBlank size={18} /><span>期限</span></div>
-                <strong className={selectedTaskDeadline?.tone}>{selectedTaskDeadline?.label}</strong>
-              </section>
+              <DetailDateEditor
+                key={`${selectedTask.id}:${selectedTask.dueAt}:due-date`}
+                kind="due"
+                value={selectedTask.dueAt}
+                fallbackTime="17:00"
+                summary={selectedTaskDeadline?.label}
+                onSave={(value) => saveTaskDate(selectedTask, "dueAt", value)}
+              />
 
               <label className="detail-section detail-status-select">
                 <span className="detail-section-label"><CheckCircle size={18} /> ステータス</span>
@@ -4479,46 +4774,165 @@ export function TodoApp() {
                 )}
               </section>
 
-              <section className="detail-section">
-                <div className="detail-section-label"><Tag size={18} /><span>タグ</span></div>
-                <div className="detail-tag-list">
-                  {selectedTask.tags.length > 0
-                    ? selectedTask.tags.map((tag) => <span className="tag" key={tag}>#{tag}</span>)
-                    : <span className="detail-empty">未設定</span>}
+              <section className="detail-section detail-editor-stack">
+                <div className="detail-section-label"><Tag size={18} /><span>分類</span></div>
+                <label className="detail-field">
+                  <span>タブ</span>
+                  <select
+                    value={selectedTask.tabId}
+                    onChange={(event) => void saveTaskPatch(
+                      selectedTask,
+                      { tabId: event.target.value },
+                      "タブを変更しました",
+                    )}
+                  >
+                    <option value="">未分類</option>
+                    {tabs.map((tab) => <option value={tab.id} key={tab.id}>{tab.name}</option>)}
+                  </select>
+                </label>
+                <label className="detail-field">
+                  <span>タグ</span>
+                  <input
+                    type="text"
+                    defaultValue={selectedTask.tags.join("、")}
+                    key={`${selectedTask.id}:${selectedTask.tags.join("|")}:tags`}
+                    maxLength={200}
+                    placeholder="例：月次、重要"
+                    aria-label="タグ"
+                    onBlur={(event) => void saveTaskPatch(
+                      selectedTask,
+                      { tags: parseTags(event.currentTarget.value) },
+                      "タグを変更しました",
+                    )}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.nativeEvent.isComposing) event.currentTarget.blur();
+                      if (event.key === "Escape") {
+                        event.currentTarget.value = selectedTask.tags.join("、");
+                        event.currentTarget.blur();
+                      }
+                    }}
+                  />
+                </label>
+              </section>
+
+              <section className="detail-section detail-editor-stack">
+                <div className="detail-section-label"><User size={18} /><span>依頼情報</span></div>
+                <div className="detail-field-grid">
+                  {([[
+                    "requester",
+                    "依頼元",
+                    "例：田中様",
+                  ], [
+                    "assignee",
+                    "依頼先",
+                    "例：自分、山田さん",
+                  ]] as const).map(([field, label, placeholder]) => (
+                    <label className="detail-field" key={field}>
+                      <span>{label}</span>
+                      <input
+                        type="text"
+                        defaultValue={selectedTask[field]}
+                        key={`${selectedTask.id}:${selectedTask[field]}:${field}`}
+                        maxLength={80}
+                        placeholder={placeholder}
+                        aria-label={label}
+                        onBlur={(event) => void saveTaskPatch(
+                          selectedTask,
+                          { [field]: event.currentTarget.value.trim() },
+                          `${label}を変更しました`,
+                        )}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && !event.nativeEvent.isComposing) event.currentTarget.blur();
+                          if (event.key === "Escape") {
+                            event.currentTarget.value = selectedTask[field];
+                            event.currentTarget.blur();
+                          }
+                        }}
+                      />
+                    </label>
+                  ))}
                 </div>
               </section>
 
-              {(selectedTask.requester || selectedTask.assignee) && (
-                <section className="detail-section">
-                  <div className="detail-section-label"><User size={18} /><span>依頼情報</span></div>
-                  <div className="detail-people">
-                    {selectedTask.requester && <span><small>依頼元</small>{selectedTask.requester}</span>}
-                    {selectedTask.assignee && <span><small>依頼先</small>{selectedTask.assignee}</span>}
-                  </div>
-                </section>
-              )}
+              <DetailDateEditor
+                key={`${selectedTask.id}:${selectedTask.startAt}:start-date`}
+                kind="start"
+                value={selectedTask.startAt}
+                fallbackTime="09:00"
+                onSave={(value) => saveTaskDate(selectedTask, "startAt", value)}
+              />
+
+              <section className="detail-section detail-editor-stack detail-automation-editor">
+                <div className="detail-section-label"><Bell size={18} /><span>通知・繰り返し</span></div>
+                <label className="detail-field">
+                  <span>リマインダー</span>
+                  <input
+                    type="datetime-local"
+                    defaultValue={toLocalInput(selectedTask.reminderAt)}
+                    key={`${selectedTask.id}:${selectedTask.reminderAt}:reminder`}
+                    aria-label="リマインダー"
+                    onBlur={(event) => {
+                      const value = event.currentTarget.value
+                        ? new Date(event.currentTarget.value).toISOString()
+                        : "";
+                      void saveTaskPatch(
+                        selectedTask,
+                        { reminderAt: value, reminderSentAt: "" },
+                        "リマインダーを変更しました",
+                      );
+                    }}
+                  />
+                </label>
+                <label className="detail-field">
+                  <span>繰り返し</span>
+                  <select
+                    value={selectedTask.recurrence}
+                    aria-label="繰り返し"
+                    onChange={(event) => void saveTaskPatch(
+                      selectedTask,
+                      { recurrence: event.target.value as Recurrence },
+                      "繰り返しを変更しました",
+                    )}
+                  >
+                    {(Object.keys(recurrenceLabels) as Recurrence[]).map((recurrence) => (
+                      <option value={recurrence} key={recurrence}>{recurrenceLabels[recurrence]}</option>
+                    ))}
+                  </select>
+                </label>
+              </section>
+
+              <section className="detail-section detail-editor-stack detail-memo-editor">
+                <div className="detail-section-label"><PencilSimple size={18} /><span>メモ</span></div>
+                <textarea
+                  rows={5}
+                  maxLength={1000}
+                  defaultValue={selectedTask.description}
+                  key={`${selectedTask.id}:${selectedTask.description}:description`}
+                  placeholder="確認事項や手順を記録できます"
+                  aria-label="メモ"
+                  onBlur={(event) => void saveTaskPatch(
+                    selectedTask,
+                    { description: event.currentTarget.value.trim() },
+                    "メモを変更しました",
+                  )}
+                  onKeyDown={(event) => {
+                    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    }
+                    if (event.key === "Escape") {
+                      event.currentTarget.value = selectedTask.description;
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+                <small className="detail-field-help">Ctrl＋Enterでも保存できます</small>
+              </section>
 
               <section className="detail-section detail-history">
-                <div className="detail-section-label"><Clock size={18} /><span>日時</span></div>
-                <div>
-                  {selectedTask.startAt && <span><small>開始</small>{formatDateTime(selectedTask.startAt)}</span>}
-                  <span><small>登録</small>{formatCreatedAt(selectedTask.createdAt)}</span>
-                </div>
+                <div className="detail-section-label"><Clock size={18} /><span>登録情報</span></div>
+                <div><span><small>登録日時</small>{formatCreatedAt(selectedTask.createdAt)}</span></div>
               </section>
-
-              {selectedTask.description && (
-                <section className="detail-section detail-memo">
-                  <div className="detail-section-label"><PencilSimple size={18} /><span>メモ</span></div>
-                  <p>{selectedTask.description}</p>
-                </section>
-              )}
-
-              {(selectedTask.reminderAt || selectedTask.recurrence !== "none") && (
-                <section className="detail-section detail-automation">
-                  {selectedTask.reminderAt && <span><Bell size={17} /> 通知 {formatDateTime(selectedTask.reminderAt)}</span>}
-                  {selectedTask.recurrence !== "none" && <span><Repeat size={17} /> {recurrenceLabels[selectedTask.recurrence]}</span>}
-                </section>
-              )}
 
               <section className="detail-section detail-attachments">
                 <div className="detail-section-label">
@@ -4562,7 +4976,6 @@ export function TodoApp() {
             </div>
 
             <footer className="detail-panel-actions">
-              <button type="button" className="secondary-button" onClick={() => openEditForm(selectedTask)}><PencilSimple size={17} /> 詳細を編集</button>
               <button type="button" className="detail-complete-button" onClick={() => void toggleComplete(selectedTask)}>
                 <CheckCircle size={18} /> {isComplete(selectedTask) ? "未着手に戻す" : "このToDoを完了する"}
               </button>
