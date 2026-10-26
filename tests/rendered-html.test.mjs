@@ -131,7 +131,9 @@ test("必須機能とレスポンシブ設計をソースに備える", async ()
   assert.match(app, /function updateFormSubTask/);
   assert.match(app, /function toggleFormSubTask/);
   assert.match(app, /hasCompletedSubTask \? "doing" : current\.status/);
-  assert.match(app, /syncStatusWithProgress && hasCompletedSubTask \? "doing" : previousTask\.status/);
+  assert.match(app, /syncStatusWithProgress && hasCompletedSubTask \? \{ status: "doing"/);
+  assert.match(app, /return saveTaskPatch\(latestTask/);
+  assert.match(app, /update\(latestTask\.subTasks\)/);
   assert.match(app, /子ToDoを完了し、ToDoを進行中にしました/);
   assert.match(app, /onClick=\{\(\) => toggleFormSubTask\(subTask\.id\)\}/);
   assert.match(app, /function reorderSubTaskCollection/);

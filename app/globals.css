@@ -5823,3 +5823,36 @@ body {
     animation-duration: 2s;
   }
 }
+
+.ai-subtask-suggestions {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border, #dce5e8);
+  border-radius: 10px;
+  background: #f3f8fa;
+  color: #263b43;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ai-subtask-suggestions p { margin: 0 0 8px; }
+.ai-subtask-suggestions small { display: block; margin-top: 7px; color: #52656d; }
+.ai-subtask-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ai-subtask-suggestions button {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid #a8c1cb;
+  border-radius: 7px;
+  background: #fff;
+  color: #305f70;
+  font-weight: 600;
+}
+.ai-subtask-suggestions button:disabled { opacity: .5; cursor: not-allowed; }
+.ai-subtask-candidates { margin-top: 12px; }
+.ai-subtask-candidate { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.ai-subtask-candidate input[type="checkbox"] { flex: 0 0 20px; width: 20px; height: 20px; accent-color: #578899; }
+.ai-subtask-candidate input[type="text"] {
+  flex: 1; min-width: 0; width: 100%; padding: 8px;
+  border: 1px solid #bccdd4; border-radius: 6px; background: #fff; color: #263b43;
+}
+.ai-subtask-candidates > button { margin-top: 10px; }
+.ai-subtask-suggestions [role="status"], .ai-subtask-suggestions [role="alert"] { margin-top: 8px; }

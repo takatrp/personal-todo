@@ -10,8 +10,9 @@
     "build": "vinext build",
     "build:pages": "vite build --config vite.pages.config.ts",
     "start": "vinext start",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
+    "test": "npm run build && node --experimental-strip-types --test tests/*.test.mjs",
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "test:ai": "node --experimental-strip-types --test tests/ai-subtasks*.test.mjs tests/subtask-append.test.mjs"
   },
   "dependencies": {
     "@phosphor-icons/web": "^2.1.2",

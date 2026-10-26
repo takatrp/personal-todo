@@ -14,6 +14,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { appendSuggestedSubTasks } from "./subtask-append";
+import { AiSubtaskSuggestions } from "./ai-subtask-suggestions";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import "@phosphor-icons/web/regular";
 import "@phosphor-icons/web/bold";
@@ -2920,31 +2922,24 @@ export function TodoApp() {
 
   async function saveSubTasks(
     task: Task,
-    subTasks: SubTask[],
+    update: (current: SubTask[]) => SubTask[],
     successMessage: string,
     syncStatusWithProgress = false,
   ) {
-    const previousTask = tasks.find((item) => item.id === task.id) ?? task;
-    const sortedSubTasks = sortSubTasks(subTasks);
-    const hasCompletedSubTask = sortedSubTasks.some((subTask) => Boolean(subTask.completedAt));
-    const updatedTask: Task = {
-      ...previousTask,
-      subTasks: sortedSubTasks,
-      status: syncStatusWithProgress && hasCompletedSubTask ? "doing" : previousTask.status,
-      completedAt: syncStatusWithProgress && hasCompletedSubTask ? "" : previousTask.completedAt,
-      updatedAt: new Date().toISOString(),
-    };
-    setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? updatedTask : item)));
-    try {
-      await writeTask(updatedTask);
-      setNotice(successMessage);
-      return true;
-    } catch {
-      setTasks((current) => sortTasks(current.map((item) => item.id === task.id ? previousTask : item)));
-      setStorageError(true);
-      setNotice("子ToDoを保存できませんでした");
-      return false;
-    }
+    const latestTask = tasksRef.current.find((item) => item.id === task.id);
+    if (!latestTask || latestTask.deletedAt) return false;
+    const subTasks = sortSubTasks(update(latestTask.subTasks));
+    const hasCompletedSubTask = subTasks.some((subTask) => Boolean(subTask.completedAt));
+    return saveTaskPatch(latestTask, {
+      subTasks,
+      ...(syncStatusWithProgress && hasCompletedSubTask ? { status: "doing" as const, completedAt: "" } : {}),
+    }, successMessage);
+  }
+
+  async function appendAiSubTasks(task: Task, titles: string[]) {
+    const latest = tasksRef.current.find((item) => item.id === task.id);
+    if (!latest || latest.deletedAt || latest.title !== task.title || !authUserIdRef.current) return false;
+    return saveSubTasks(latest, (current) => appendSuggestedSubTasks(current, titles, createId), "選択した子ToDoを追加しました");
   }
 
   async function addSubTask(task: Task) {
@@ -2967,7 +2962,7 @@ export function TodoApp() {
       completedAt: "",
     };
     setSubTaskDraft("");
-    const saved = await saveSubTasks(task, [...task.subTasks, nextSubTask], "子ToDoを追加しました");
+    const saved = await saveSubTasks(task, (current) => current.length < MAX_SUBTASKS ? [...current, { ...nextSubTask, sortOrder: current.length ? Math.max(...current.map((item) => item.sortOrder)) + 1000 : 0 }] : current, "子ToDoを追加しました");
     if (!saved) setSubTaskDraft(title);
   }
 
@@ -2981,7 +2976,7 @@ export function TodoApp() {
     const now = new Date().toISOString();
     return saveSubTasks(
       task,
-      task.subTasks.map((item) => item.id === subTask.id
+      (current) => current.map((item) => item.id === subTask.id
         ? { ...item, title, updatedAt: now }
         : item),
       "子ToDoの内容を変更しました",
@@ -2991,7 +2986,7 @@ export function TodoApp() {
   async function toggleSubTask(task: Task, subTask: SubTask) {
     const now = new Date().toISOString();
     const nextCompletedAt = subTask.completedAt ? "" : now;
-    await saveSubTasks(task, task.subTasks.map((item) => item.id === subTask.id
+    await saveSubTasks(task, (current) => current.map((item) => item.id === subTask.id
       ? { ...item, completedAt: nextCompletedAt, updatedAt: now }
       : item), nextCompletedAt
         ? "子ToDoを完了し、ToDoを進行中にしました"
@@ -3002,7 +2997,7 @@ export function TodoApp() {
     if (!window.confirm(`子ToDo「${subTask.title}」を削除しますか？`)) return;
     await saveSubTasks(
       task,
-      task.subTasks.filter((item) => item.id !== subTask.id),
+      (current) => current.filter((item) => item.id !== subTask.id),
       "子ToDoを削除しました",
     );
   }
@@ -3029,7 +3024,7 @@ export function TodoApp() {
   ) {
     const reordered = reorderSubTaskCollection(task.subTasks, sourceId, targetId, placeAfter);
     if (!reordered) return;
-    await saveSubTasks(task, reordered, "子ToDoの並び順を保存しました");
+    await saveSubTasks(task, (current) => reorderSubTaskCollection(current, sourceId, targetId, placeAfter) ?? current, "子ToDoの並び順を保存しました");
   }
 
   function handleSubTaskDragStart(
@@ -4680,6 +4675,14 @@ export function TodoApp() {
                   />
                   <button type="submit" disabled={!subTaskDraft.trim()}><Plus size={15} /> 追加</button>
                 </form>
+                {!isFormOpen && <AiSubtaskSuggestions
+                  key={`${selectedTask.id}:${selectedTask.title}:${session?.user.id ?? ""}`}
+                  title={selectedTask.title}
+                  existingTitles={selectedTask.subTasks.map((item) => item.title)}
+                  userId={session?.user.id ?? null}
+                  client={todoSupabase}
+                  onAppend={(titles) => appendAiSubTasks(selectedTask, titles)}
+                />}
                 {selectedTask.subTasks.length > 0 ? (
                   <div className="subtask-list">
                     {sortSubTasks(selectedTask.subTasks).map((subTask) => {
@@ -5070,6 +5073,18 @@ export function TodoApp() {
                       <span style={{ width: `${formSubTaskProgress.percent}%` }} />
                     </div>
 
+                    <AiSubtaskSuggestions
+                      key={`form:${editingId ?? "new"}:${form.title}:${session?.user.id ?? ""}`}
+                      title={form.title}
+                      existingTitles={form.subTasks.map((item) => item.title)}
+                      userId={session?.user.id ?? null}
+                      client={todoSupabase}
+                      disabled={isSaving}
+                      onAppend={(titles) => {
+                        setForm((current) => ({ ...current, subTasks: appendSuggestedSubTasks(current.subTasks, titles, createId) }));
+                        return true;
+                      }}
+                    />
                     {form.subTasks.length > 0 && (
                       <div className="form-subtask-list">
                         {sortSubTasks(form.subTasks).map((subTask) => {
