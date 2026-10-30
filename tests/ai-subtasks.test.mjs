@@ -27,18 +27,34 @@ test("rejects malformed model responses instead of guessing fields or truncating
   }
   assert.deepEqual(parseAiTitles({ titles: [" 確認する "] }), ["確認する"]);
 });
-test("sends only title and authenticated headers; no external API called", async () => {
+test("sends only title, goal and authenticated headers; no external API called", async () => {
   let calls = 0;
-  const titles = await requestAiSubtasks({ ...opts(), fetcher: async (url, init) => {
+  const titles = await requestAiSubtasks({ ...opts(), goal: "  参加者全員で方針を決める\r\n次の行動を共有する  ", fetcher: async (url, init) => {
     calls++;
     assert.equal(url, "https://example.supabase.co/functions/v1/suggest-subtasks");
-    assert.deepEqual(JSON.parse(init.body), { title: "親ToDo" });
+    assert.deepEqual(JSON.parse(init.body), { title: "親ToDo", goal: "参加者全員で方針を決める\n次の行動を共有する" });
     assert.equal(init.headers.Authorization, "Bearer mock-token");
     assert.equal(init.headers.apikey, "mock-public-key");
     return Response.json({ titles: ["資料を確認"] });
   } });
   assert.equal(calls, 1);
   assert.deepEqual(titles, ["資料を確認"]);
+});
+test("an omitted or empty goal still permits title-only suggestions", async () => {
+  for (const goal of [undefined, "", "  \n\t "]) {
+    await requestAiSubtasks({ ...opts(), goal, fetcher: async (_url, init) => {
+      assert.deepEqual(JSON.parse(init.body), { title: "親ToDo", goal: "" });
+      return Response.json({ titles: ["確認する"] });
+    } });
+  }
+});
+test("invalid or overlong goals never resolve a session or call the endpoint", async () => {
+  for (const goal of [null, 42, "x".repeat(2001), "a\u0000b", "a\u0085b"]) {
+    await assert.rejects(requestAiSubtasks({ ...opts(), goal,
+      getSession: async () => assert.fail("must not resolve a session"),
+      fetcher: async () => assert.fail("must not call endpoint"),
+    }), (error) => error.status === 400);
+  }
 });
 test("session missing, changed, error and input overlong never call endpoint", async () => {
   const forbiddenFetch = async () => assert.fail("must not call endpoint");

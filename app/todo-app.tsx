@@ -16,6 +16,7 @@ import {
 } from "react";
 import { appendSuggestedSubTasks } from "./subtask-append";
 import { AiSubtaskSuggestions } from "./ai-subtask-suggestions";
+import { MAX_TASK_GOAL_LENGTH, normalizeTaskGoal } from "./task-goal";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import "@phosphor-icons/web/regular";
 import "@phosphor-icons/web/bold";
@@ -118,6 +119,7 @@ type SubTask = {
 type Task = {
   id: string;
   title: string;
+  goal: string;
   sortOrder: number;
   description: string;
   status: TaskStatus;
@@ -143,6 +145,7 @@ type Task = {
 
 type TaskForm = {
   title: string;
+  goal: string;
   description: string;
   status: TaskStatus;
   startAt: string;
@@ -203,6 +206,7 @@ type TodoTemplate = {
   id: string;
   name: string;
   title: string;
+  goal: string;
   description: string;
   tags: string[];
   tabId: string;
@@ -262,6 +266,7 @@ const todoSupabase = createTodoSupabaseClient();
 
 const initialForm: TaskForm = {
   title: "",
+  goal: "",
   description: "",
   status: "open",
   startAt: "",
@@ -403,6 +408,7 @@ function subTaskProgress(task: Task) {
 function normalizeTask(task: Task): Task {
   return {
     ...task,
+    goal: normalizeTaskGoal(task.goal),
     sortOrder: Number.isFinite(task.sortOrder) ? task.sortOrder : 0,
     description: task.description ?? "",
     status: statusLabels[task.status] ? task.status : "open",
@@ -548,6 +554,7 @@ function buildDesignPreviewData() {
     { id: "preview-tkc", name: "TKC", sortOrder: 1000, createdAt, updatedAt: createdAt },
   ];
   const baseTask: Omit<Task, "id" | "title" | "sortOrder" | "status" | "dueAt" | "tags" | "tabId"> = {
+    goal: "",
     description: "",
     startAt: "",
     reminderAt: "",
@@ -721,9 +728,7 @@ async function readTemplates(): Promise<TodoTemplate[]> {
       .transaction(TEMPLATE_STORE_NAME, "readonly")
       .objectStore(TEMPLATE_STORE_NAME)
       .getAll();
-    request.onsuccess = () => resolve((request.result as TodoTemplate[]).sort((first, second) =>
-      first.createdAt.localeCompare(second.createdAt),
-    ));
+    request.onsuccess = () => resolve(sortTemplates(request.result as TodoTemplate[]));
     request.onerror = () => reject(request.error);
     request.transaction.oncomplete = () => database.close();
   });
@@ -1164,7 +1169,8 @@ function sortTabs(tabs: TodoTab[]) {
 }
 
 function sortTemplates(templates: TodoTemplate[]) {
-  return [...templates].sort((first, second) => first.createdAt.localeCompare(second.createdAt));
+  return templates.map((template) => ({ ...template, goal: normalizeTaskGoal(template.goal) }))
+    .sort((first, second) => first.createdAt.localeCompare(second.createdAt));
 }
 
 function nextTaskSortOrder(tasks: Task[]) {
@@ -1234,6 +1240,7 @@ export function TodoApp() {
   const [detailPanelWidth, setDetailPanelWidth] = useState(360);
   const [detailPanelMaximum, setDetailPanelMaximum] = useState(560);
   const [isDetailPanelResizing, setIsDetailPanelResizing] = useState(false);
+  const [detailGoalDraft, setDetailGoalDraft] = useState<{ taskId: string; sourceGoal: string; value: string } | null>(null);
   const [subTaskDraft, setSubTaskDraft] = useState("");
   const [formSubTaskDraft, setFormSubTaskDraft] = useState("");
   const [form, setForm] = useState<TaskForm>(initialForm);
@@ -1618,6 +1625,7 @@ export function TodoApp() {
       if (!query) return true;
       return [
         task.title,
+        task.goal,
         task.description,
         task.requester,
         task.assignee,
@@ -1642,6 +1650,9 @@ export function TodoApp() {
     ? visibleTasks.find((task) => task.id === selectedTaskId) ?? visibleTasks[0] ?? null
     : null;
   const selectedTaskDeadline = selectedTask ? dueLabel(selectedTask) : null;
+  const detailGoalValue = selectedTask && detailGoalDraft?.taskId === selectedTask.id
+    && detailGoalDraft.sourceGoal === selectedTask.goal
+    ? detailGoalDraft.value : selectedTask?.goal ?? "";
   const selectedSubTaskProgress = selectedTask ? subTaskProgress(selectedTask) : null;
   const formSubTaskProgress = calculateSubTaskProgress(form.subTasks);
   const draggingTab = draggingTabId ? tabs.find((tab) => tab.id === draggingTabId) : null;
@@ -2640,6 +2651,7 @@ export function TodoApp() {
     setIsFileDragActive(false);
     setForm({
       title: task.title,
+      goal: task.goal,
       description: task.description,
       status: task.status,
       startAt: start.date,
@@ -2765,6 +2777,7 @@ export function TodoApp() {
     let task: Task = {
       id: taskId,
       title,
+      goal: normalizeTaskGoal(form.goal),
       sortOrder: previousTask?.sortOrder ?? nextTaskSortOrder(tasks),
       description: form.description.trim(),
       status: nextStatus,
@@ -3465,6 +3478,7 @@ export function TodoApp() {
   function applyTemplate(template: TodoTemplate) {
     const hasDraft = Boolean(
       form.title.trim() ||
+      form.goal.trim() ||
       form.description.trim() ||
       form.tags.trim() ||
       form.requester.trim() ||
@@ -3474,6 +3488,7 @@ export function TodoApp() {
     setForm({
       ...initialForm,
       title: template.title,
+      goal: normalizeTaskGoal(template.goal),
       description: template.description,
       tags: template.tags.join("、"),
       tabId: tabs.some((tab) => tab.id === template.tabId) ? template.tabId : "",
@@ -3488,6 +3503,7 @@ export function TodoApp() {
     setForm({
       ...initialForm,
       title: template.title,
+      goal: normalizeTaskGoal(template.goal),
       description: template.description,
       tags: template.tags.join("、"),
       tabId: tabs.some((tab) => tab.id === template.tabId) ? template.tabId : "",
@@ -3517,6 +3533,7 @@ export function TodoApp() {
       id: previous?.id ?? createId(),
       name,
       title: form.title.trim(),
+      goal: normalizeTaskGoal(form.goal),
       description: form.description.trim(),
       tags: parseTags(form.tags),
       tabId: tabs.some((tab) => tab.id === form.tabId) ? form.tabId : "",
@@ -3669,6 +3686,7 @@ export function TodoApp() {
       }
       const safeTemplates = restoredTemplates.map((template) => ({
         ...template,
+        goal: normalizeTaskGoal(template.goal),
         tabId: tabIds.has(template.tabId) ? template.tabId : "",
         recurrence: recurrenceLabels[template.recurrence] ? template.recurrence : "none" as Recurrence,
       }));
@@ -4621,6 +4639,41 @@ export function TodoApp() {
             </header>
 
             <div className="detail-panel-body">
+              <label className="detail-section detail-editor-stack detail-goal-editor">
+                <span className="detail-section-label">達成したいこと</span>
+                <textarea
+                  rows={3}
+                  maxLength={MAX_TASK_GOAL_LENGTH}
+                  value={detailGoalValue}
+                  aria-label="達成したいこと"
+                  aria-describedby="detail-goal-help"
+                  placeholder="例：打ち合わせで方針を決め、次にすることを全員で共有したい"
+                  onChange={(event) => setDetailGoalDraft({
+                    taskId: selectedTask.id,
+                    sourceGoal: selectedTask.goal,
+                    value: event.target.value,
+                  })}
+                  onBlur={(event) => {
+                    const value = event.currentTarget.value;
+                    void saveTaskPatch(selectedTask, { goal: normalizeTaskGoal(value) }, "達成したいことを保存しました").then((saved) => {
+                      if (saved) setDetailGoalDraft((current) => current?.taskId === selectedTask.id && current.value === value ? null : current);
+                    });
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing) return;
+                    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    } else if (event.key === "Escape") {
+                      event.currentTarget.value = selectedTask.goal;
+                      setDetailGoalDraft(null);
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+                <small className="detail-field-help" id="detail-goal-help">AIはタイトルとこの内容をもとに子ToDoを提案します。</small>
+              </label>
+
               <DetailDateEditor
                 key={`${selectedTask.id}:${selectedTask.dueAt}:due-date`}
                 kind="due"
@@ -4678,6 +4731,7 @@ export function TodoApp() {
                 {!isFormOpen && <AiSubtaskSuggestions
                   key={`${selectedTask.id}:${selectedTask.title}:${session?.user.id ?? ""}`}
                   title={selectedTask.title}
+                  goal={normalizeTaskGoal(detailGoalValue)}
                   existingTitles={selectedTask.subTasks.map((item) => item.title)}
                   userId={session?.user.id ?? null}
                   client={todoSupabase}
@@ -5043,6 +5097,20 @@ export function TodoApp() {
                 </label>
 
                 <label className="form-field form-field-full">
+                  <span>達成したいこと</span>
+                  <textarea
+                    rows={3}
+                    maxLength={MAX_TASK_GOAL_LENGTH}
+                    value={form.goal}
+                    onChange={(event) => setForm((current) => ({ ...current, goal: event.target.value }))}
+                    aria-label="達成したいこと"
+                    aria-describedby="form-goal-help"
+                    placeholder="例：打ち合わせで方針を決め、次にすることを全員で共有したい"
+                  />
+                  <small id="form-goal-help">AIはタイトルとこの内容をもとに子ToDoを提案します。空欄でも登録できます。</small>
+                </label>
+
+                <label className="form-field form-field-full">
                   <span>メモ</span>
                   <textarea
                     rows={4}
@@ -5076,6 +5144,7 @@ export function TodoApp() {
                     <AiSubtaskSuggestions
                       key={`form:${editingId ?? "new"}:${form.title}:${session?.user.id ?? ""}`}
                       title={form.title}
+                      goal={normalizeTaskGoal(form.goal)}
                       existingTitles={form.subTasks.map((item) => item.title)}
                       userId={session?.user.id ?? null}
                       client={todoSupabase}

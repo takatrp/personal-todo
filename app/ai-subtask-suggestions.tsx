@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseConfig } from "./supabase-client";
+import { isValidTaskGoal } from "./task-goal";
 import {
   AiSuggestionError, aiSuggestionErrorMessage, isValidAiTitle,
   MAX_AI_CHILDREN, MAX_AI_PARENT_LENGTH, requestAiSubtasks, selectAiTitles,
@@ -10,6 +11,7 @@ import {
 
 type Props = {
   title: string;
+  goal: string;
   existingTitles: string[];
   userId: string | null;
   client: SupabaseClient | null;
@@ -19,11 +21,11 @@ type Props = {
 type Candidate = { title: string; selected: boolean };
 
 export function AiSubtaskSuggestions(props: Props) {
-  // A different title/account owns an entirely new suggestion session.
-  return <SuggestionSession key={JSON.stringify([props.title, props.userId])} {...props} />;
+  // A different title, goal or account owns a new suggestion session.
+  return <SuggestionSession key={JSON.stringify([props.title, props.goal, props.userId])} {...props} />;
 }
 
-function SuggestionSession({ title, existingTitles, userId, client, onAppend, disabled = false }: Props) {
+function SuggestionSession({ title, goal, existingTitles, userId, client, onAppend, disabled = false }: Props) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -32,7 +34,8 @@ function SuggestionSession({ title, existingTitles, userId, client, onAppend, di
   const savingRef = useRef(false);
   const mountedRef = useRef(false);
   const canGenerate = !disabled && !!client && !!userId
-    && isValidAiTitle(title.trim(), MAX_AI_PARENT_LENGTH) && existingTitles.length < MAX_AI_CHILDREN;
+    && isValidAiTitle(title.trim(), MAX_AI_PARENT_LENGTH) && isValidTaskGoal(goal)
+    && existingTitles.length < MAX_AI_CHILDREN;
   const selected = candidates.filter((candidate) => candidate.selected).map((candidate) => candidate.title);
   const invalidSelection = selected.some((candidate) => !isValidAiTitle(candidate));
   const appendable = selectAiTitles(selected, existingTitles);
@@ -79,7 +82,7 @@ function SuggestionSession({ title, existingTitles, userId, client, onAppend, di
     }, 25_000);
     try {
       const titles = await requestAiSubtasks({
-        title, userId, ...getSupabaseConfig(),
+        title, goal, userId, ...getSupabaseConfig(),
         getSession: () => client.auth.getSession(), signal: controller.signal,
       });
       if (!mountedRef.current || controllerRef.current !== controller || controller.signal.aborted) return;
@@ -121,7 +124,7 @@ function SuggestionSession({ title, existingTitles, userId, client, onAppend, di
 
   return (
     <div className="ai-subtask-suggestions" aria-label="AIによる子ToDoの提案">
-      <p className="ai-subtask-disclosure">ボタンを押すと、親ToDoのタイトルだけをOpenAIへ送信します。メモ・添付・依頼先・既存の子ToDoは送信しません。</p>
+      <p className="ai-subtask-disclosure">タイトルと「達成したいこと」をもとに、必要な子ToDoを提案します。ボタンを押すと、この2項目をOpenAIへ送信します。</p>
       <div className="ai-subtask-actions">
         <button type="button" onClick={() => void generate()} disabled={!canGenerate || busy || saving}>
           {busy ? "AIが候補を作成中…" : "AIで子ToDoを提案"}

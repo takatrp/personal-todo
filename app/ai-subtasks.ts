@@ -1,4 +1,6 @@
 /** AI suggestions are untrusted text, never executable instructions or saved IDs. */
+import { isValidTaskGoal, normalizeTaskGoal } from "./task-goal.ts";
+
 export const MAX_AI_SUGGESTIONS = 8;
 export const MAX_AI_TITLE_LENGTH = 160;
 export const MAX_AI_PARENT_LENGTH = 120;
@@ -58,6 +60,7 @@ export function aiSuggestionErrorMessage(error: unknown): string {
 type AiSession = { access_token: string; user: { id: string } };
 type RequestOptions = {
   title: string;
+  goal?: string;
   userId: string;
   url: string;
   publishableKey: string;
@@ -66,12 +69,13 @@ type RequestOptions = {
   fetcher?: typeof fetch;
 };
 
-/** Only the title crosses the network. Existing children, notes and contacts stay local. */
+/** Only the title and goal cross the network. Notes, children and contacts stay local. */
 export async function requestAiSubtasks({
-  title, userId, url, publishableKey, getSession, signal, fetcher = fetch,
+  title, goal = "", userId, url, publishableKey, getSession, signal, fetcher = fetch,
 }: RequestOptions): Promise<string[]> {
   signal.throwIfAborted();
   if (!isValidAiTitle(title.trim(), MAX_AI_PARENT_LENGTH)) throw new AiSuggestionError(400);
+  if (!isValidTaskGoal(goal)) throw new AiSuggestionError(400);
   if (!url || !publishableKey) throw new AiSuggestionError(503);
   const { data, error } = await getSession();
   signal.throwIfAborted();
@@ -83,7 +87,7 @@ export async function requestAiSubtasks({
       apikey: publishableKey,
       Authorization: `Bearer ${data.session.access_token}`,
     },
-    body: JSON.stringify({ title: title.trim() }),
+    body: JSON.stringify({ title: title.trim(), goal: normalizeTaskGoal(goal) }),
     signal,
   });
   signal.throwIfAborted();

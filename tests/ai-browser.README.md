@@ -14,7 +14,7 @@ Terminal 2:
 node tests/ai-browser.run.mjs
 ```
 
-The Vite config intentionally does not load `.env`; it injects fake public configuration. Playwright intercepts the fake Supabase endpoint and blocks every non-local request. The harness uses invented titles and fake sessions, not a real user. The script checks confirmation-only editable/selectable append, deduplication, concurrent manual additions, cancellation/late replies, title/logout/unmount/history invalidation, HTTP 401/429/503, timeout, failed save retention, and the 100-child bound. Screenshots are written to `/tmp/personal-todo-ai-qa/` only when all scenarios pass.
+The Vite config intentionally does not load `.env`; it injects fake public configuration. Playwright intercepts the fake Supabase endpoint and blocks every non-local request. The harness uses invented titles and fake sessions, not a real user. The script checks title-and-goal payloads, confirmation-only editable/selectable append, deduplication, concurrent manual additions, cancellation/late replies, title/goal/logout/unmount/history invalidation, HTTP 401/429/503, timeout, failed save retention, and the 100-child bound. Screenshots are written to `output/playwright/` only when all scenarios pass.
 
 This is a component integration harness, not full application or production authentication coverage. Actual modal/detail integration and live SQL/Edge Function remain separate checks.
 

@@ -21,3 +21,13 @@ After explicit approval for the isolated ToDo AI/quota setup:
 - Frontend publication is authorized after these checks. Real authenticated OpenAI generation remains a separate post-publication test, maximum3 dummy calls.
 
 This supplements the earlier local-only validation record; it does not imply production model quality or full app end-to-end validation.
+
+## Goal context update — 2026-10-30 JST
+
+- Added the optional persisted `goal` field (up to 2,000 characters) below the title in create/edit forms and the detail panel. Legacy tasks/templates default to an empty goal; existing JSON-based cloud and backup storage carry the field without a schema change.
+- The client sends only `{ title, goal }` to the existing Function. Goal changes cancel pending suggestions and clear previous candidates. The Function remains compatible with older `{ title }` requests.
+- Deployed `suggest-subtasks` version 4 with `verify_jwt=true`; downloaded source matches the tested handler and entrypoint. Existing Auth, quota, model and secret settings were preserved.
+- `npm run test`: 30 tests passed, including title/goal payload validation and server prompt coverage. Application and GitHub Pages builds passed.
+- Standalone TypeScript checking still reports the existing three nullable IndexedDB transaction accesses and two missing Worker binding types. No diagnostic concerns the added goal field or AI request changes.
+- Mock browser suite: 15 scenarios passed, including goal edits, cancellation, late results and mobile overflow. Full application checks passed for field placement, new registration, Ctrl+Enter, detail autosave, reload, edit and template persistence, and mobile layout.
+- Browser checks used isolated synthetic data and blocked non-local requests. No customer task or attachment was sent to OpenAI, and no paid generation was performed during this update. Live model output quality was not re-evaluated.

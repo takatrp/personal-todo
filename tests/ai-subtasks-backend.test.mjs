@@ -30,16 +30,46 @@ test('authenticated title-only generation has strict provider limits, no persist
   assert.equal(body.store, false);
   assert.equal(body.max_output_tokens, 2048);
   assert.equal(body.model, 'mock-model');
-  assert.deepEqual(JSON.parse(body.input), { title: '会議を準備する' });
+  assert.deepEqual(JSON.parse(body.input), { title: '会議を準備する', goal: '' });
   assert.equal(body.text.format.strict, true);
   assert.equal(response.headers.get('cache-control'), 'no-store');
+});
+test('optional goal is normalized and sent with the title', async () => {
+  const { handler, calls } = fixture();
+  const response = await handler(request({ title: '会議を準備する', goal: '  参加者が論点を理解する\r\n決定事項を\t次回へ引き継ぐ  ' }));
+  assert.equal(response.status, 200);
+  const body = JSON.parse(calls[2].body);
+  assert.deepEqual(JSON.parse(body.input), {
+    title: '会議を準備する',
+    goal: '参加者が論点を理解する\n決定事項を\t次回へ引き継ぐ',
+  });
+  assert.match(body.instructions, /達成状態に必要/);
+  assert.match(body.instructions, /余計な作業を増やさない/);
+});
+test('missing or whitespace-only goal remains compatible with title-only clients', async () => {
+  for (const body of [{ title: '会議を準備する' }, { title: '会議を準備する', goal: ' \r\n\t ' }]) {
+    const { handler, calls } = fixture();
+    assert.equal((await handler(request(body))).status, 200);
+    assert.deepEqual(JSON.parse(JSON.parse(calls[2].body).input), { title: '会議を準備する', goal: '' });
+  }
+});
+test('goal accepts 2000 Japanese characters and allowed line whitespace', async () => {
+  for (const goal of ['目'.repeat(2000), '一行目\n二行目\t補足']) {
+    const { handler, calls } = fixture();
+    assert.equal((await handler(request({ title: '準備する', goal }))).status, 200);
+    assert.equal(JSON.parse(JSON.parse(calls[2].body).input).goal, goal);
+  }
 });
 test('missing config, origin, auth and malformed/oversized input never calls provider', async () => {
   for (const [overrides, req, status] of [
     [{ TODO_OPENAI_API_KEY: '' }, request(), 503], [{ TODO_AI_ALLOWED_USER_IDS: '' }, request(), 503],
     [{}, request({}, { origin: 'https://attacker.test' }), 403],
     [{}, request({}, { authorization: '' }), 401],
-    [{}, request({ title: 'x', notes: 'private' }), 400], [{}, request({ title: 'x'.repeat(121) }), 400],
+    [{}, request({ title: 'x', notes: 'private' }), 400], [{}, request({ title: 'x', goal: '', notes: 'private' }), 400],
+    [{}, request({ title: 'x'.repeat(121) }), 400], [{}, request({ title: 'x', goal: 1 }), 400],
+    [{}, request({ title: 'x', goal: null }), 400], [{}, request({ title: 'x', goal: 'x'.repeat(2001) }), 400],
+    [{}, request({ title: 'x', goal: 'ok\u0000bad' }), 400], [{}, request({ title: 'x', goal: 'ok\u000bbad' }), 400],
+    [{}, request({ title: 'x', goal: 'ok\u0085bad' }), 400],
     [{}, request({ title: '  ' }), 400], [{}, request({ title: 'a\nb' }), 400],
     [{}, request({ title: 'x'.repeat(3000) }), 400],
   ]) { const { handler, calls } = fixture(overrides); assert.equal((await handler(req)).status, status); assert.equal(calls.length, 0); }
